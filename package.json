@@ -1,0 +1,85 @@
+{
+  "name": "@audivo/mcp",
+  "version": "0.1.0",
+  "description": "Official Audivo MCP server: podcast search, episode discovery, quotes, and transcripts for Claude, Codex, Cursor, and any other MCP client.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AudivoDotDev/mcp.git"
+  },
+  "homepage": "https://docs.audivo.dev/mcp",
+  "bugs": "https://github.com/AudivoDotDev/mcp/issues",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "podcast",
+    "transcripts",
+    "audivo",
+    "claude",
+    "codex",
+    "cursor"
+  ],
+  "bin": {
+    "audivo-mcp": "./dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./lambda": {
+      "types": "./dist/lambda.d.ts",
+      "default": "./dist/lambda.js"
+    }
+  },
+  "files": [
+    "dist",
+    "contract/openapi.yaml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "contract:sync": "node --import tsx scripts/contract-sync.ts",
+    "contract:types": "openapi-typescript contract/openapi.yaml -o src/contract/types.ts && prettier --write src/contract/types.ts",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
+    "undici": "8.10.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@types/node": "^24.13.3",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "eslint": "^10.9.1",
+    "openapi-typescript": "^7.13.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.12",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.68.0",
+    "vitest": "^4.1.11",
+    "yaml": "^2.8.0"
+  },
+  "//overrides": "openapi-typescript declares a `typescript: ^5.x` peer while this package uses TypeScript 6; its output is identical under both, so this narrows the one edge instead of turning peer resolution off.",
+  "overrides": {
+    "openapi-typescript": {
+      "typescript": "$typescript"
+    }
+  }
+}

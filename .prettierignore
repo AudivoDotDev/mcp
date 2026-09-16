@@ -1,0 +1,6 @@
+dist/
+coverage/
+node_modules/
+package-lock.json
+contract/openapi.yaml
+CHANGELOG.md

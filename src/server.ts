@@ -1,0 +1,171 @@
+/**
+ * The MCP server itself: one `McpServer` per HTTP request, built with that
+ * request's credential in its closure and thrown away with its response.
+ *
+ * That is the whole statelessness argument. There is no server instance
+ * that outlives a request, no field a credential is written to, and no
+ * cache keyed by anything a caller sent — so a warm container answering a
+ * second account is running code that has never seen the first. The
+ * credential is read from the `Authorization` header, forwarded verbatim to
+ * the API, and appears in no log line and no result: `server.test.ts` proves
+ * the last two by searching for it.
+ *
+ * Both protocol eras the SDK serves are wired through the same factory, so
+ * the tool surface cannot differ by client. The 2026-07-28 leg is the SDK's
+ * own `createMcpHandler`; the 2025 leg is the SDK's stateless idiom rebuilt
+ * here with JSON responses, because this runs behind an edge that buffers a
+ * whole response before forwarding it, and an event stream that is buffered
+ * is a JSON document with extra steps.
+ */
+import {
+  McpServer,
+  WebStandardStreamableHTTPServerTransport,
+  createMcpHandler,
+  isLegacyRequest,
+  type CallToolResult,
+} from '@modelcontextprotocol/server';
+import type { ApiClient, TraceEntry } from './api-client.js';
+import { INTERNAL_ERROR_MESSAGE, McpToolError, errorName, localError, scrub } from './errors.js';
+import { randomNonce, toErrorResult, toToolResult, type Nonce } from './render.js';
+import { TOOLS, type AnyToolDefinition, type ToolContext } from './tools.js';
+
+export type Logger = (event: Record<string, unknown>) => void;
+
+export type McpDeps = {
+  readonly api: ApiClient;
+  readonly log: Logger;
+  readonly nonce?: Nonce;
+  readonly now?: () => number;
+};
+
+export const SERVER_INFO = { name: 'audivo', version: '0.1.0' } as const;
+
+/**
+ * The credential is the `Authorization` value exactly as sent, when it is a
+ * bearer token with something after the scheme. Anything else is "no key":
+ * the tool answers `unauthenticated` without a request, rather than
+ * forwarding a header the API would refuse anyway.
+ */
+export function credentialOf(request: Request | undefined): string | null {
+  const value = request?.headers.get('authorization')?.trim();
+  if (value === undefined || value === '') return null;
+  const match = /^bearer\s+(\S+)$/i.exec(value);
+  return match === null ? null : value;
+}
+
+type LogLine = Record<string, unknown>;
+
+/** Every string in a log line, scrubbed; a line is read by more people than a table row is. */
+function scrubLine(line: LogLine, credential: string | null): LogLine {
+  return JSON.parse(scrub(JSON.stringify(line), credential)) as LogLine;
+}
+
+async function runTool(
+  tool: AnyToolDefinition,
+  args: unknown,
+  deps: McpDeps,
+  credential: string | null,
+): Promise<CallToolResult> {
+  const now = deps.now ?? (() => Date.now());
+  const nonce = deps.nonce ?? randomNonce;
+  const startedAt = now();
+  const trace: TraceEntry[] = [];
+  const ctx: ToolContext = { credential, api: deps.api, nonce, trace };
+  const line: Record<string, unknown> = { tool: tool.name, authenticated: credential !== null };
+  try {
+    const result = toToolResult(await tool.handler(args, ctx), nonce);
+    deps.log(scrubLine({ ...line, outcome: 'ok', api: trace, ms: now() - startedAt }, credential));
+    return result;
+  } catch (raw) {
+    const error =
+      raw instanceof McpToolError
+        ? raw
+        : localError('internal_error', INTERNAL_ERROR_MESSAGE, { cause: raw });
+    deps.log(
+      scrubLine(
+        {
+          ...line,
+          outcome: 'error',
+          origin: error.origin,
+          code: error.code,
+          status: error.status,
+          // The name of what actually went wrong, and only for the code that
+          // hides it from the caller: every other code's message is the diagnosis.
+          ...(error.code === 'internal_error' && error.origin === 'mcp'
+            ? { error: errorName(error.cause) }
+            : {}),
+          api: trace,
+          ms: now() - startedAt,
+        },
+        credential,
+      ),
+    );
+    return toErrorResult(error, credential, nonce);
+  }
+}
+
+/** A fresh server for one request: that request's credential in its closure, nothing else. */
+export function createMcpServer(deps: McpDeps, credential: string | null): McpServer {
+  const server = new McpServer(SERVER_INFO);
+  for (const tool of TOOLS) {
+    server.registerTool(
+      tool.name,
+      {
+        title: tool.title,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        annotations: tool.annotations,
+      },
+      (args) => runTool(tool, args, deps, credential),
+    );
+  }
+  return server;
+}
+
+export type McpHandler = {
+  fetch(request: Request): Promise<Response>;
+};
+
+function jsonRpcError(status: number, code: number, message: string): Response {
+  return new Response(JSON.stringify({ jsonrpc: '2.0', error: { code, message }, id: null }), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+/**
+ * The 2025-era stateless leg: a fresh instance and a fresh transport per
+ * POST, `enableJsonResponse` on, torn down when the response is complete.
+ * GET and DELETE are session operations and there are no sessions.
+ */
+async function serveLegacy(deps: McpDeps, request: Request): Promise<Response> {
+  if (request.method.toUpperCase() !== 'POST') {
+    return jsonRpcError(405, -32000, 'Method not allowed.');
+  }
+  const server = createMcpServer(deps, credentialOf(request));
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    enableJsonResponse: true,
+  });
+  await server.connect(transport);
+  try {
+    return await transport.handleRequest(request);
+  } finally {
+    await transport.close().catch(() => {});
+    await server.close().catch(() => {});
+  }
+}
+
+export function createHandler(deps: McpDeps): McpHandler {
+  const modern = createMcpHandler((ctx) => createMcpServer(deps, credentialOf(ctx.requestInfo)), {
+    legacy: 'reject',
+    // `auto` is a single JSON body unless a handler emits a notification
+    // first, which none does; `json` would say the same and warn about it.
+    responseMode: 'auto',
+    onerror: (error) => deps.log({ event: 'mcp_error', error: errorName(error) }),
+  });
+  return {
+    fetch: async (request) =>
+      (await isLegacyRequest(request)) ? serveLegacy(deps, request) : modern.fetch(request),
+  };
+}
