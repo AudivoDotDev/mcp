@@ -31,6 +31,7 @@ import {
   nonces,
   type FakeApiOptions,
   type FakeResponse,
+  type FakeUploadRejection,
 } from './testing/fake-api.js';
 
 const NONCE = '0123456789abcdef';
@@ -43,7 +44,7 @@ function sha256Of(filePath: string): string {
 type HarnessOptions = {
   readonly api?: FakeApiOptions;
   /** What the presigned PUT answers; 200 with an empty body unless a test says otherwise. */
-  readonly put?: FakeResponse;
+  readonly put?: FakeResponse | FakeUploadRejection;
   /** Replaces the real `inspectAudioFile`, for facts a fixture cannot honestly carry. */
   readonly inspect?: (filePath: string) => Promise<AudioFileFacts>;
   readonly credential?: string | null;
@@ -215,6 +216,22 @@ describe('upload_audio sends the bytes', () => {
     expect(upload.puts).toHaveLength(1);
   });
 
+  it('reports a PUT that never got an answer (a transport rejection) as upload_failed, not internal_error', async () => {
+    const filePath = writeWavFixture(SECONDS);
+    const { api, upload, fail } = harness({
+      put: { reject: new Error('ECONNRESET') },
+    });
+
+    const error = await fail({ path: filePath });
+
+    expect(error.code).toBe('upload_failed');
+    expect(error.type).toBe('unavailable');
+    expect(error.retryable).toBe(true);
+    expect(error.message).toContain('ECONNRESET');
+    expect(upload.puts).toHaveLength(1);
+    expect(api.callsTo('createUpload')).toHaveLength(1);
+  });
+
   it('refuses a PUT URL that is not a public https origin, without leaking the raw error', async () => {
     const filePath = writeWavFixture(SECONDS);
     const { upload, fail } = harness({
@@ -231,6 +248,14 @@ describe('upload_audio sends the bytes', () => {
 });
 
 describe('upload_audio refuses', () => {
+  it("a relative path by the tool's own schema, before any API call", () => {
+    const { api } = harness();
+    const schema = LOCAL_TOOLS[0]!.inputSchema;
+
+    expect(schema.safeParse({ path: 'relative/audio.mp3' }).success).toBe(false);
+    expect(api.calls).toEqual([]);
+  });
+
   it('a path that is not a file', async () => {
     const dir = path.dirname(writeWavFixture(SECONDS));
     const { api, fail } = harness();

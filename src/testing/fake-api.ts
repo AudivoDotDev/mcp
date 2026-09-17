@@ -443,20 +443,25 @@ export type RecordedPut = {
 
 export type FakeUploadTransport = UploadTransport & { readonly puts: RecordedPut[] };
 
+/** A transport rejection, as `undiciUploadTransport`'s `fetch` would throw one — DNS, TLS, a reset. */
+export type FakeUploadRejection = { readonly reject: Error };
+
 /**
  * The presigned PUT as the suites see it: every call recorded, one canned
- * answer for all of them. Nothing is written and no socket is opened, so a
- * test asserts the URL, the headers and the file the tool chose rather than
- * what S3 would have made of them.
+ * answer for all of them — a status/body pair, or, for exercising the path
+ * where the PUT itself never gets an answer, `{ reject: <Error> }`. Nothing
+ * is written and no socket is opened, so a test asserts the URL, the headers
+ * and the file the tool chose rather than what S3 would have made of them.
  */
 export function fakeUploadTransport(
-  answer: FakeResponse = { status: 200, body: '' },
+  answer: FakeResponse | FakeUploadRejection = { status: 200, body: '' },
 ): FakeUploadTransport {
   const puts: RecordedPut[] = [];
   return {
     puts,
     put: async (url, headers, path) => {
       puts.push({ url, headers, path });
+      if ('reject' in answer) throw answer.reject;
       return answer;
     },
   };

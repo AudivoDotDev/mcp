@@ -56,12 +56,19 @@ export const UPLOAD_CONTENT_TYPES = [
 
 /** The contract's upload bounds, restated for the schema and the checks below. */
 export const MAX_UPLOAD_BYTES = 5_368_709_120;
-export const MAX_DECLARED_DURATION_SECONDS = 36_000;
+const MAX_DECLARED_DURATION_SECONDS = 36_000;
 /** Longest path any mainstream filesystem addresses; the bound exists so the string has one. */
-export const MAX_PATH_LENGTH = 4096;
+const MAX_PATH_LENGTH = 4096;
 
 /** The S3 error body is small XML; this much of it names the cause without pasting a page. */
-export const PUT_ERROR_BODY_CHARS = 200;
+const PUT_ERROR_BODY_CHARS = 200;
+
+/**
+ * A transport rejection's own `.message` is whatever the underlying `fetch`
+ * threw — plenty for a DNS, TLS, or reset failure, occasionally more. This
+ * much names the cause without risking an oversized tool result.
+ */
+const PUT_REJECTION_MESSAGE_CHARS = 300;
 
 function isUploadContentType(value: string): value is UploadContentType {
   return (UPLOAD_CONTENT_TYPES as readonly string[]).includes(value);
@@ -181,7 +188,25 @@ export function localTools(options: LocalToolOptions = {}): readonly AnyToolDefi
         );
       }
 
-      const response = await transport.put(created.put_url, created.put_headers, args.path);
+      // `transport.put` is `undiciUploadTransport` in production, and its
+      // `fetch` call has no try/catch of its own — a DNS failure, a reset
+      // mid-stream, or a TLS error rejects instead of resolving. Left
+      // uncaught, that would reach `runTool` as an uncaught throw and be
+      // reported as `internal_error`, blaming this server for a bucket that
+      // never answered. It gets the same code the non-2xx branch below does:
+      // the PUT was attempted once either way, and retrying is the caller's
+      // call to make by announcing again.
+      let response: { readonly status: number; readonly body: string };
+      try {
+        response = await transport.put(created.put_url, created.put_headers, args.path);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw localError(
+          'upload_failed',
+          `PUT to the upload URL failed: ${detail}`.slice(0, PUT_REJECTION_MESSAGE_CHARS),
+          { cause: error },
+        );
+      }
       if (response.status < 200 || response.status > 299) {
         throw localError(
           'upload_failed',
