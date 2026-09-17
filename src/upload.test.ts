@@ -42,6 +42,42 @@ function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'audivo-mcp-upload-'));
 }
 
+/**
+ * The smallest Ogg page `file-type` will recognise as Opus: a 27-byte `OggS`
+ * header (capture pattern, version, header type, granule position, serial
+ * number, page sequence number, CRC, segment count) naming one segment, a
+ * one-byte segment table giving that segment's length, and a 19-byte
+ * `OpusHead` packet (RFC 7845) as the segment itself. No audio data follows,
+ * so `music-metadata` cannot report a duration for it — only the content
+ * type is asserted here. Verified against `file-type` 21.3.4 with
+ * `fileTypeFromFile`, which reports `{ ext: 'opus', mime: 'audio/ogg;
+ * codecs=opus' }` for exactly these bytes.
+ */
+function buildOggOpusFixture(): Buffer {
+  const opusHead = Buffer.alloc(19);
+  opusHead.write('OpusHead', 0, 'ascii');
+  opusHead.writeUInt8(1, 8); // version
+  opusHead.writeUInt8(1, 9); // channel count
+  opusHead.writeUInt16LE(0, 10); // pre-skip
+  opusHead.writeUInt32LE(48000, 12); // input sample rate
+  opusHead.writeUInt16LE(0, 16); // output gain
+  opusHead.writeUInt8(0, 18); // channel mapping family
+
+  const header = Buffer.alloc(27);
+  header.write('OggS', 0, 'ascii');
+  header.writeUInt8(0, 4); // stream structure version
+  header.writeUInt8(0x02, 5); // header type: beginning of stream
+  header.writeBigUInt64LE(0n, 6); // granule position
+  header.writeUInt32LE(1, 14); // bitstream serial number
+  header.writeUInt32LE(0, 18); // page sequence number
+  header.writeUInt32LE(0, 22); // CRC checksum (file-type does not validate it)
+  header.writeUInt8(1, 26); // number of page segments
+
+  const segmentTable = Buffer.from([opusHead.length]);
+
+  return Buffer.concat([header, segmentTable, opusHead]);
+}
+
 describe('inspectAudioFile', () => {
   it('reports size, sha256, container, content type and duration for a real WAV', async () => {
     const dir = tempDir();
@@ -89,6 +125,29 @@ describe('inspectAudioFile', () => {
     const dir = tempDir();
     await expect(inspectAudioFile(dir)).rejects.toBeInstanceOf(McpToolError);
   });
+
+  it('reports audio/opus for a synthesized Ogg-Opus page (duration is unavailable for the stub)', async () => {
+    const dir = tempDir();
+    const filePath = path.join(dir, 'fixture.opus.ogg');
+    fs.writeFileSync(filePath, buildOggOpusFixture());
+
+    const facts = await inspectAudioFile(filePath);
+
+    expect(facts.contentType).toBe('audio/opus');
+  });
+
+  it('refuses a path that names nothing on disk as invalid_request from mcp', async () => {
+    const dir = tempDir();
+    const missing = path.join(dir, 'does-not-exist.wav');
+
+    await expect(inspectAudioFile(missing)).rejects.toMatchObject(
+      expect.objectContaining({
+        name: 'McpToolError',
+        code: 'invalid_request',
+        origin: 'mcp',
+      }) as Partial<McpToolError>,
+    );
+  });
 });
 
 describe('contentTypeFor', () => {
@@ -114,6 +173,11 @@ describe('contentTypeFor', () => {
     expect(contentTypeFor('video/matroska')).toBeNull();
     expect(contentTypeFor('application/octet-stream')).toBeNull();
     expect(contentTypeFor(null)).toBeNull();
+  });
+
+  it('normalises the MIME before lookup and maps Ogg-Opus explicitly', () => {
+    expect(contentTypeFor('audio/ogg; codecs=opus')).toBe('audio/opus');
+    expect(contentTypeFor('AUDIO/OGG')).toBe('audio/ogg');
   });
 
   it('is exactly the table MIME_CONTENT_TYPES describes', () => {

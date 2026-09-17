@@ -55,10 +55,24 @@ export const MIME_CONTENT_TYPES: Readonly<Record<string, string>> = {
   'audio/webm': 'audio/webm',
 };
 
-/** `null` in, `null` out; a MIME the table does not list also answers `null`. */
+/**
+ * `null` in, `null` out; a MIME the table does not list also answers `null`.
+ * `file-type` 21.x reports Opus-in-Ogg as `audio/ogg; codecs=opus` — a
+ * parameterised MIME that appears nowhere in `MIME_CONTENT_TYPES` verbatim —
+ * so the string is lower-cased and trimmed to its type/subtype (everything
+ * before the first `;`) before lookup, and the Opus case is mapped
+ * explicitly: a `codecs=opus` parameter on an `audio/ogg` MIME yields
+ * `audio/opus`, while a plain `audio/ogg` (no such parameter) stays
+ * `audio/ogg`.
+ */
 export function contentTypeFor(detected: string | null): string | null {
   if (detected === null) return null;
-  return MIME_CONTENT_TYPES[detected] ?? null;
+  const normalized = detected.toLowerCase();
+  const [mime] = normalized.split(';', 1);
+  if (mime === 'audio/ogg' && /(?:^|;)\s*codecs=opus\s*(?:;|$)/.test(normalized)) {
+    return 'audio/opus';
+  }
+  return MIME_CONTENT_TYPES[mime ?? ''] ?? null;
 }
 
 async function sha256OfFile(path: string): Promise<string> {
@@ -71,13 +85,21 @@ async function sha256OfFile(path: string): Promise<string> {
 
 /**
  * `fs.stat`, the streamed SHA-256, and what `file-type` and `music-metadata`
- * can tell from the bytes. A non-regular file (a directory, a socket, ...)
- * is refused before any of that runs; a file that is regular but not audio
- * `file-type` and `music-metadata` recognise yields nulls, not a throw — the
- * caller decides whether nulls are a reason to refuse the upload.
+ * can tell from the bytes. A path `stat` cannot resolve at all (missing,
+ * permission denied, ...) is refused as `invalid_request` without relaying
+ * the OS error text; a non-regular file (a directory, a socket, ...) that
+ * `stat` does resolve is refused too. Both happen before any of the rest
+ * runs; a file that is regular but not audio `file-type` and
+ * `music-metadata` recognise yields nulls, not a throw — the caller decides
+ * whether nulls are a reason to refuse the upload.
  */
 export async function inspectAudioFile(path: string): Promise<AudioFileFacts> {
-  const stats = await stat(path);
+  let stats: Awaited<ReturnType<typeof stat>>;
+  try {
+    stats = await stat(path);
+  } catch {
+    throw localError('invalid_request', 'path must name a readable file on this machine');
+  }
   if (!stats.isFile()) {
     throw localError('invalid_request', `${path} is not a regular file.`);
   }
