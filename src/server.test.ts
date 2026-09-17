@@ -153,6 +153,15 @@ describe('the listing', () => {
     for (const tool of tools) expect((tool.inputSchema as { type: string }).type).toBe('object');
   });
 
+  it('leaves upload_audio to the local server: nine tools, none of them local-only', async () => {
+    const { handler } = wired();
+    const tools = await listTools(handler);
+    // The tool reads a file off the caller's disk; this process has never
+    // seen it, so the hosted surface does not offer it at all.
+    expect(tools).toHaveLength(9);
+    expect(tools.map((tool) => tool.name)).not.toContain('upload_audio');
+  });
+
   it('stays within the token budget', async () => {
     const { handler } = wired();
     const tools = await listTools(handler);

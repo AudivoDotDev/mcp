@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { McpToolError } from './errors.js';
+import { buildWavFixture, tempDir } from './testing/audio-file.js';
 import {
   MIME_CONTENT_TYPES,
   PutUrlError,
@@ -12,35 +12,6 @@ import {
   inspectAudioFile,
   uploadTransport,
 } from './upload.js';
-
-/** A minimal valid WAV: 44-byte RIFF/fmt/data header plus silence, PCM 16-bit mono @ 8 kHz. */
-function buildWavFixture(durationSeconds: number): Buffer {
-  const sampleRate = 8000;
-  const numChannels = 1;
-  const bitsPerSample = 16;
-  const blockAlign = numChannels * (bitsPerSample / 8);
-  const dataSize = Math.round(sampleRate * durationSeconds) * blockAlign;
-  const buf = Buffer.alloc(44 + dataSize);
-  buf.write('RIFF', 0, 'ascii');
-  buf.writeUInt32LE(36 + dataSize, 4);
-  buf.write('WAVE', 8, 'ascii');
-  buf.write('fmt ', 12, 'ascii');
-  buf.writeUInt32LE(16, 16);
-  buf.writeUInt16LE(1, 20); // PCM
-  buf.writeUInt16LE(numChannels, 22);
-  buf.writeUInt32LE(sampleRate, 24);
-  buf.writeUInt32LE(sampleRate * blockAlign, 28);
-  buf.writeUInt16LE(blockAlign, 32);
-  buf.writeUInt16LE(bitsPerSample, 34);
-  buf.write('data', 36, 'ascii');
-  buf.writeUInt32LE(dataSize, 40);
-  // The rest is already zero-filled silence.
-  return buf;
-}
-
-function tempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'audivo-mcp-upload-'));
-}
 
 /**
  * The smallest Ogg page `file-type` will recognise as Opus: a 27-byte `OggS`

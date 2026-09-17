@@ -38,6 +38,7 @@ import type {
   ShowSummary,
   TranscriptJobResponse,
   TranscriptReadResponse,
+  UploadCreated,
 } from './api-client.js';
 import { scrub, type McpToolError } from './errors.js';
 
@@ -430,6 +431,41 @@ export function renderQuote(quote: QuoteResponse): Document {
       confirm_with: { quote_ref: ref, expected_total_credits: quote.total_ceiling_credits },
     },
     untrusted: proseBlock(rows),
+  };
+}
+
+// --- The upload ---------------------------------------------------------------------
+
+/**
+ * An announced and delivered upload, as the local `upload_audio` tool hands
+ * it back. Everything here is trusted: the API minted the identifiers and
+ * echoed the size, type and duration it accepted, and the two fields that
+ * come from this machine — the file's name and its hash — are a basename and
+ * a hex digest, neither of them prose anybody wrote. There is no untrusted
+ * half: a file the caller chose off their own disk has no publisher.
+ *
+ * `put_url` is deliberately absent. It is a presigned credential with a
+ * bucket path in it, the bytes are already sent by the time this renders,
+ * and no tool takes it — the handle a model needs next is `quote_with`,
+ * spelled exactly as `quote` accepts it.
+ */
+export function renderUpload(
+  created: UploadCreated,
+  facts: { readonly file: string; readonly sha256: string },
+): Document {
+  return {
+    trusted: {
+      upload_id: created.upload_id,
+      file: facts.file,
+      bytes: created.bytes,
+      content_type: created.content_type,
+      declared_duration_seconds: created.declared_duration_seconds,
+      sha256: facts.sha256,
+      title: created.title,
+      retained_until: created.retained_until,
+      quote_with: { uploads: [{ upload_id: created.upload_id }] },
+    },
+    untrusted: '',
   };
 }
 

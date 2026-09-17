@@ -28,6 +28,7 @@ import type { ApiClient, TraceEntry } from './api-client.js';
 import { INTERNAL_ERROR_MESSAGE, McpToolError, errorName, localError, scrub } from './errors.js';
 import { randomNonce, toErrorResult, toToolResult, type Nonce } from './render.js';
 import { TOOLS, type AnyToolDefinition, type ToolContext } from './tools.js';
+import type { UploadTransport } from './upload.js';
 
 export type Logger = (event: Record<string, unknown>) => void;
 
@@ -36,6 +37,8 @@ export type McpDeps = {
   readonly log: Logger;
   readonly nonce?: Nonce;
   readonly now?: () => number;
+  /** The presigned PUT, wired only by the local stdio server; see `ToolContext.upload`. */
+  readonly upload?: UploadTransport;
 };
 
 export const SERVER_INFO = { name: 'audivo', version: '0.1.0' } as const;
@@ -70,7 +73,13 @@ async function runTool(
   const nonce = deps.nonce ?? randomNonce;
   const startedAt = now();
   const trace: TraceEntry[] = [];
-  const ctx: ToolContext = { credential, api: deps.api, nonce, trace };
+  const ctx: ToolContext = {
+    credential,
+    api: deps.api,
+    nonce,
+    trace,
+    ...(deps.upload === undefined ? {} : { upload: deps.upload }),
+  };
   const line: Record<string, unknown> = { tool: tool.name, authenticated: credential !== null };
   try {
     const result = toToolResult(await tool.handler(args, ctx), nonce);
@@ -104,10 +113,19 @@ async function runTool(
   }
 }
 
-/** A fresh server for one request: that request's credential in its closure, nothing else. */
-export function createMcpServer(deps: McpDeps, credential: string | null): McpServer {
+/**
+ * A fresh server for one request: that request's credential in its closure,
+ * nothing else. `tools` is the hosted catalog unless a caller says otherwise;
+ * the local stdio server passes `[...TOOLS, ...LOCAL_TOOLS]`, which is the
+ * only way a tool reaches a client without also reaching the hosted one.
+ */
+export function createMcpServer(
+  deps: McpDeps,
+  credential: string | null,
+  tools: readonly AnyToolDefinition[] = TOOLS,
+): McpServer {
   const server = new McpServer(SERVER_INFO);
-  for (const tool of TOOLS) {
+  for (const tool of tools) {
     server.registerTool(
       tool.name,
       {

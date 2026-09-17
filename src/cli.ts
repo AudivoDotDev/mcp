@@ -2,8 +2,10 @@
  * The local server: `npx -y @audivo/mcp`, spoken to over stdio by a client
  * that spawns it (Claude Code, Codex, Cursor, and the rest). The same nine
  * tools as the hosted server at `https://api.audivo.dev/mcp`, built by the
- * same factory; what differs is where the credential comes from and how long
- * a server instance lives.
+ * same factory, plus the one tool only a process on the caller's own machine
+ * can offer: `upload_audio` reads a file off that disk, so `LOCAL_TOOLS` is
+ * registered here and nowhere else. What else differs is where the credential
+ * comes from and how long a server instance lives.
  *
  * The hosted server builds a fresh `McpServer` per request so a warm
  * container never holds a credential. A local process is one user with one
@@ -19,9 +21,11 @@ import { serveStdio, type StdioServerHandle } from '@modelcontextprotocol/server
 import { createApiClient, type ApiFetch } from './api-client.js';
 import { BaseUrlError, assertApiBaseUrl } from './base-url.js';
 import { errorName } from './errors.js';
+import { LOCAL_TOOLS } from './local-tools.js';
 import { createMcpServer, type McpDeps } from './server.js';
 import { TOOLS } from './tools.js';
 import { undiciTransport } from './transport.js';
+import { undiciUploadTransport } from './upload.js';
 
 /** Every variable the local server reads. */
 export const CLI_ENV = {
@@ -98,8 +102,14 @@ export function stdioDeps(
   return {
     api: createApiClient({ baseUrl: config.baseUrl, fetch: options.fetch }),
     log: (event) => options.stderr(JSON.stringify(event)),
+    // What makes `upload_audio` answerable here: the presigned PUT, over the
+    // same pinned undici the API calls go out on.
+    upload: undiciUploadTransport,
   };
 }
+
+/** Every tool this server registers: the hosted catalog, and the local-only one. */
+export const SERVED_TOOLS = Object.freeze([...TOOLS, ...LOCAL_TOOLS]);
 
 /** Starts serving and returns the handle; the transport keeps the process alive until it closes. */
 export function serve(config: CliConfig, options: StdioOptions = {}): StdioServerHandle {
@@ -107,7 +117,7 @@ export function serve(config: CliConfig, options: StdioOptions = {}): StdioServe
     fetch: options.fetch ?? undiciTransport,
     stderr: options.stderr ?? processStderr,
   });
-  return serveStdio(() => createMcpServer(deps, config.credential), {
+  return serveStdio(() => createMcpServer(deps, config.credential, SERVED_TOOLS), {
     ...(options.transport === undefined ? {} : { transport: options.transport }),
     onerror: (error) => deps.log({ event: 'mcp_error', error: errorName(error) }),
   });
@@ -129,6 +139,6 @@ export function main(
     throw error;
   }
   serve(config, { stderr });
-  stderr(`audivo-mcp: serving ${TOOLS.length} tools over stdio against ${config.baseUrl}`);
+  stderr(`audivo-mcp: serving ${SERVED_TOOLS.length} tools over stdio against ${config.baseUrl}`);
   return 0;
 }

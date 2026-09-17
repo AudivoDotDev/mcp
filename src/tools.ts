@@ -37,6 +37,7 @@ import {
   type MemberFold,
   type Nonce,
 } from './render.js';
+import type { UploadTransport } from './upload.js';
 
 export type ToolContext = {
   /** The `Authorization` value the MCP request carried, or `null` when it carried none. */
@@ -44,6 +45,13 @@ export type ToolContext = {
   readonly api: ApiClient;
   readonly nonce: Nonce;
   readonly trace: TraceEntry[];
+  /**
+   * The presigned PUT, present only on the local stdio server: reading a file
+   * off the caller's disk is something only a process on that disk can do, so
+   * the hosted server leaves this undefined and `upload_audio` — the one tool
+   * that needs it — is not registered there at all.
+   */
+  readonly upload?: UploadTransport;
 };
 
 export type ToolDefinition<S extends z.ZodObject = z.ZodObject> = {
@@ -60,7 +68,10 @@ export type AnyToolDefinition = Omit<ToolDefinition, 'handler'> & {
   readonly handler: (args: unknown, ctx: ToolContext) => Promise<Document>;
 };
 
-function defineTool<S extends z.ZodObject>(definition: ToolDefinition<S>): AnyToolDefinition {
+/** The one narrowing every tool goes through, `local-tools.ts`'s included. */
+export function defineTool<S extends z.ZodObject>(
+  definition: ToolDefinition<S>,
+): AnyToolDefinition {
   return definition as unknown as AnyToolDefinition;
 }
 

@@ -80,7 +80,7 @@ describe('serve', () => {
     close = undefined;
   });
 
-  it('serves the nine tools over the given transport with the configured key on every call', async () => {
+  it('serves the nine hosted tools and upload_audio, with the configured key on every call', async () => {
     const api = fakeApi();
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     const handle = serve(
@@ -107,6 +107,8 @@ describe('serve', () => {
         'quote',
         'read_transcript',
         'search_shows',
+        // Only here: the hosted server has no disk to read a file from.
+        'upload_audio',
       ].sort(),
     );
 

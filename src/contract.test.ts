@@ -20,7 +20,9 @@ import * as AjvFormatsModule from 'ajv-formats';
 import { loadSpec } from './testing/spec.js';
 import { API_PATHS, createApiClient, type ApiOperation } from './api-client.js';
 import { ERROR_TYPES } from './errors.js';
+import { LOCAL_TOOLS, UPLOAD_CONTENT_TYPES } from './local-tools.js';
 import { TOOLS, type ToolContext } from './tools.js';
+import { writeWavFixture } from './testing/audio-file.js';
 import {
   BASE_URL,
   CHART,
@@ -40,6 +42,7 @@ import {
   UPLOAD_CREATED,
   errorEnvelope,
   fakeApi,
+  fakeUploadTransport,
   jobStatus,
   nonces,
   transcriptRead,
@@ -100,10 +103,12 @@ function operationOf(operationId: string) {
   throw new Error(`no operation ${operationId}`);
 }
 
-const OPERATIONS = Object.keys(API_PATHS) as ApiOperation[];
-// createUpload joins this sweep once a tool sends it (upload_audio, a later
-// task): nothing here calls it yet, so it would fail "was never sent".
-const SENT_OPERATIONS = OPERATIONS.filter((operation) => operation !== 'createUpload');
+// Every operation the client declares is sent by some tool below, the local
+// `upload_audio` included, so the sweeps run over the whole table.
+const SENT_OPERATIONS = Object.keys(API_PATHS) as ApiOperation[];
+
+/** The tools the sweep drives: the hosted catalog and the local-only one. */
+const ALL_TOOLS = [...TOOLS, ...LOCAL_TOOLS];
 
 describe('the fixtures the suites run against', () => {
   it.each([
@@ -119,6 +124,14 @@ describe('the fixtures the suites run against', () => {
     ['Error', errorEnvelope({ code: 'payment_required', type: 'payment_required' })],
   ])('%s validates against the contract', (name, fixture) => {
     validate(schemaOf(name), fixture);
+  });
+
+  it('names every upload content type the contract enumerates, and no others', () => {
+    // The tool's zod enum is a hand-written list because the generated type
+    // is a union with no run-time value; this is the half `satisfies` cannot
+    // check — that the list forgot nothing.
+    const enumerated = (schemaOf('UploadContentType') as { enum: string[] }).enum;
+    expect([...UPLOAD_CONTENT_TYPES].sort()).toEqual([...enumerated].sort());
   });
 
   it("validates a literal CreateUploadRequest against the contract's schema", () => {
@@ -158,6 +171,7 @@ describe('what each tool sends', () => {
       api: createApiClient({ baseUrl: BASE_URL, fetch: api.fetch }),
       nonce: nonces('0123456789abcdef'),
       trace: [],
+      upload: fakeUploadTransport(),
     };
     const calls: [string, unknown][] = [
       ['search_shows', { q: 'daily', limit: 5 }],
@@ -190,9 +204,13 @@ describe('what each tool sends', () => {
       ['read_transcript', { job_id: JOB_ID }],
       // The same tool's other id: a settled cache read, on its own operation.
       ['read_transcript', { read_id: READ_ID }],
+      // A real WAV off disk: the announcement carries the file's own hash,
+      // size, type and duration, so what is validated below is a body the
+      // tool actually derived rather than one this file typed out.
+      ['upload_audio', { path: writeWavFixture(2.5), title: 'A test upload' }],
     ];
     for (const [name, args] of calls) {
-      const tool = TOOLS.find((candidate) => candidate.name === name)!;
+      const tool = ALL_TOOLS.find((candidate) => candidate.name === name)!;
       await tool.handler(tool.inputSchema.parse(args), ctx);
     }
     for (const call of api.calls) {

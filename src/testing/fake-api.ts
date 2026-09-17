@@ -12,6 +12,7 @@
  */
 import type { components } from '../contract/types.js';
 import type { ApiFetch, ApiFetchInit, ApiFetchResponse, ApiOperation } from '../api-client.js';
+import type { PutHeaders, UploadTransport } from '../upload.js';
 
 type Schemas = components['schemas'];
 
@@ -432,6 +433,33 @@ function isFakeResponse(value: unknown): value is FakeResponse {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export type RecordedPut = {
+  readonly url: string;
+  readonly headers: PutHeaders;
+  readonly path: string;
+};
+
+export type FakeUploadTransport = UploadTransport & { readonly puts: RecordedPut[] };
+
+/**
+ * The presigned PUT as the suites see it: every call recorded, one canned
+ * answer for all of them. Nothing is written and no socket is opened, so a
+ * test asserts the URL, the headers and the file the tool chose rather than
+ * what S3 would have made of them.
+ */
+export function fakeUploadTransport(
+  answer: FakeResponse = { status: 200, body: '' },
+): FakeUploadTransport {
+  const puts: RecordedPut[] = [];
+  return {
+    puts,
+    put: async (url, headers, path) => {
+      puts.push({ url, headers, path });
+      return answer;
+    },
+  };
 }
 
 export function fakeApi(options: FakeApiOptions = {}): FakeApi {
