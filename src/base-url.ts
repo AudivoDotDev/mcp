@@ -75,7 +75,8 @@ function authorityOf(raw: string): string {
   return end === -1 ? rest : rest.slice(0, end);
 }
 
-function isPublicHost(hostname: string): boolean {
+/** Exported for `upload.ts`'s `assertPutUrl`, which applies the same host rule to a presigned PUT. */
+export function isPublicHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
   if (host === 'localhost' || host.endsWith('.localhost')) return false;
   if (host.startsWith('[') && host.endsWith(']')) {
