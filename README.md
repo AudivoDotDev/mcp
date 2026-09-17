@@ -6,7 +6,8 @@
 Podcast search, episode discovery, pricing, and transcripts for Claude, Codex, Cursor, and any other
 [MCP](https://modelcontextprotocol.io) client, backed by the [Audivo API](https://docs.audivo.dev).
 
-Two ways to connect, same nine tools:
+Two ways to connect: the hosted endpoint serves nine tools, and the local server serves the same
+nine plus `upload_audio`.
 
 |               | Hosted                                                                           | Local                                                                       |
 | ------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
@@ -30,6 +31,7 @@ You need an API key from the [Audivo dashboard](https://audivo.dev). Keys are sh
 | `list_groups`     | Your recent groups                                        | No                                       |
 | `cancel_group`    | Stop what has not started and release its credits         | No                                       |
 | `read_transcript` | A finished transcript, fenced for the model               | Only a cached read you have not paid for |
+| `upload_audio`    | Announce and upload a file from this machine, for quote   | No (local only)                          |
 
 `confirm` is the one tool that spends. It refuses unless the model restates the quote's total, and it
 takes an idempotency key so a retry cannot spend twice. Ask the user before calling it.
@@ -91,6 +93,34 @@ Keep files that contain a real key out of Git and shared chats.
 The server writes nothing to stdout except protocol messages. Log lines go to stderr as JSON, and the
 key never appears in them.
 
+## Upload your own audio
+
+Not every show has a public RSS feed: Spotify- and YouTube-only shows have none, so `search_shows`
+and `list_episodes` cannot reach them. `upload_audio` is for that audio anyway: a recording you made
+yourself, an interview, or a file you already have on disk. Upload it however you obtained it, as
+long as you hold the rights to it, for example a file you pulled down yourself with `yt-dlp`.
+Audivo's servers never fetch from YouTube or any other platform; they only ever receive the bytes you
+send them.
+
+This tool is local server only. Try it with:
+
+> Upload ~/Downloads/interview.m4a and transcribe it
+
+The tool announces the file to Audivo (its hash, size, content type, and declared duration), then
+uploads the bytes straight to Audivo's storage with the signed URL the announcement returns. That
+call answers with an `upload_id`; pass it to `quote` as `uploads: [{ upload_id }]`, then `confirm`
+to pay for the transcript, exactly like any other quote.
+
+Limits: 1 byte to 5 GiB, up to 10 hours of declared duration, and one of these content types:
+`audio/mpeg`, `audio/mp3`, `audio/mp4`, `audio/m4a`, `audio/x-m4a`, `audio/aac`, `audio/x-aac`,
+`audio/ogg`, `audio/opus`, `audio/flac`, `audio/x-flac`, `audio/wav`, `audio/x-wav`, `audio/webm`. An
+upload is kept for 7 days, and its transcript is private to your account; each account may hold up to
+10 GiB across 100 unexpired uploads at a time.
+
+The hosted server does not offer `upload_audio`: reading a file off your disk is something only a
+process on that disk can do, and `https://api.audivo.dev/mcp` runs nowhere near it. See the
+[uploads guide](https://docs.audivo.dev/uploads) for more.
+
 ## Hosted: point a client at the URL
 
 | Setting        | Value                               |
@@ -121,6 +151,9 @@ deployed by Audivo.
   refuses on a mismatch without sending anything. The API applies the same check on its side.
 - **Typed by the contract.** `src/contract/types.ts` is generated from the published OpenAPI spec in
   `contract/openapi.yaml`; a test fails the build when the two drift.
+- **Local only.** `upload_audio` reads a file from your disk and sends it straight to Audivo's
+  bucket with a signed URL; the hosted server never sees your files and never fetches from
+  third-party sites.
 
 ## Development
 

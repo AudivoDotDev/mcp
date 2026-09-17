@@ -1,11 +1,11 @@
 /**
  * The local server: `npx -y @audivo/mcp`, spoken to over stdio by a client
- * that spawns it (Claude Code, Codex, Cursor, and the rest). The same nine
- * tools as the hosted server at `https://api.audivo.dev/mcp`, built by the
- * same factory, plus the one tool only a process on the caller's own machine
- * can offer: `upload_audio` reads a file off that disk, so `LOCAL_TOOLS` is
- * registered here and nowhere else. What else differs is where the credential
- * comes from and how long a server instance lives.
+ * that spawns it (Claude Code, Codex, Cursor, and the rest). Ten tools: the
+ * same nine as the hosted server at `https://api.audivo.dev/mcp`, built by
+ * the same factory, plus the one tool only a process on the caller's own
+ * machine can offer: `upload_audio` reads a file off that disk, so
+ * `LOCAL_TOOLS` is registered here and nowhere else. What else differs is
+ * where the credential comes from and how long a server instance lives.
  *
  * The hosted server builds a fresh `McpServer` per request so a warm
  * container never holds a credential. A local process is one user with one

@@ -1,6 +1,6 @@
 {
   "name": "@audivo/mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Official Audivo MCP server: podcast search, episode discovery, quotes, and transcripts for Claude, Codex, Cursor, and any other MCP client.",
   "license": "MIT",
   "type": "module",

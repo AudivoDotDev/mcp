@@ -41,7 +41,7 @@ export type McpDeps = {
   readonly upload?: UploadTransport;
 };
 
-export const SERVER_INFO = { name: 'audivo', version: '0.1.0' } as const;
+export const SERVER_INFO = { name: 'audivo', version: '0.2.0' } as const;
 
 /**
  * The credential is the `Authorization` value exactly as sent, when it is a

@@ -456,6 +456,6 @@ describe('what leaves the server', () => {
   });
 
   it('names itself', () => {
-    expect(SERVER_INFO).toEqual({ name: 'audivo', version: '0.1.0' });
+    expect(SERVER_INFO).toEqual({ name: 'audivo', version: '0.2.0' });
   });
 });

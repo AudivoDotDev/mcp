@@ -115,12 +115,12 @@ export const GROUP_FOLD_CONCURRENCY = 8;
  * in `server.test.ts` at four characters a token, the usual English-prose
  * estimate, over the serialized listing.
  *
- * Raised from 2,000 when the product name became `Audivo`: the surface sat at
- * exactly 8,000 characters, and two extra letters put it one token over. The
- * headroom is deliberate — the next description edit should not have to be a
- * negotiation with this constant.
+ * Raised from 2,000 when the product name became `Audivo`, then from 2,100 to 2,200 in 0.2.0 when
+ * `search_shows` grew a sentence pointing a caller with no feed at `upload_audio`. Each edit has
+ * eaten the previous raise's headroom; this one leaves more of it, on purpose, so the next
+ * description edit does not have to be a negotiation with this constant.
  */
-export const TOOL_SURFACE_TOKEN_BUDGET = 2_100;
+export const TOOL_SURFACE_TOKEN_BUDGET = 2_200;
 
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -168,7 +168,9 @@ const searchShows = defineTool({
   description:
     'Find shows by name. Trusted block: show_id, feed_url, itunes_id, music_led. Fenced block: ' +
     "title, author, categories. Pass a chosen show's feed_url and itunes_id to list_episodes or " +
-    'quote.',
+    'quote. An empty result usually means the show has no public RSS feed (Spotify- or ' +
+    'YouTube-only shows have none); Audivo never fetches those platforms. Audio you hold can be ' +
+    'transcribed instead: upload_audio on the local server, or POST /v1/uploads.',
   inputSchema: z.object({
     q: z.string().min(1).max(200).describe('Show name.'),
     limit,
