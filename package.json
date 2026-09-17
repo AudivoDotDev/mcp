@@ -8,7 +8,7 @@
     "type": "git",
     "url": "git+https://github.com/AudivoDotDev/mcp.git"
   },
-  "homepage": "https://docs.audivo.dev/mcp",
+  "homepage": "https://docs.audivo.dev/mcp-server",
   "bugs": "https://github.com/AudivoDotDev/mcp/issues",
   "keywords": [
     "mcp",

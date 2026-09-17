@@ -107,7 +107,7 @@ claude mcp add --transport http --scope user audivo https://api.audivo.dev/mcp \
 ```
 
 Per-client instructions for the hosted server, including ChatGPT and Claude on the web, are in the
-[connection guide](https://docs.audivo.dev/mcp). The hosted server is this package's `lambda` export,
+[connection guide](https://docs.audivo.dev/mcp-server). The hosted server is this package's `lambda` export,
 deployed by Audivo.
 
 ## How it works
