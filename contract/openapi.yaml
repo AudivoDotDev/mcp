@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audivo API
-  version: '0.11.0'
+  version: '0.12.0'
   description: >-
     The Audivo API turns a public podcast episode into a clean, timed
     transcript. Name an episode by an Apple Podcasts link, by its RSS feed
@@ -74,6 +74,8 @@ tags:
     description: Dashboard-JWT Stripe Checkout, Customer Portal, invoices, and refunds.
   - name: Data
     description: Dashboard-JWT portable export and account deletion.
+  - name: Uploads
+    description: Audio the caller puts in Audivo's bucket and names as a source (ADR-0031).
 paths:
   /v1/transcripts:
     post:
@@ -103,6 +105,16 @@ paths:
         member not yet landed — is `409 request_in_progress`: retry with
         the same key shortly, never a new one, which would start a second
         job for the same episode.
+
+
+        **Upload episodes.** `episode_id` may name an episode created from
+        the caller's own upload; it resolves against the upload's stored
+        revision, and an episode that resolves to another account's upload
+        answers `404` before dry-run pricing or cache access runs. A cache
+        miss still prices and reserves at the upload's declared-duration
+        ceiling, and may subsequently fail `upload_missing` if the
+        underlying object has since expired. A cached transcript stays
+        readable after the source upload's `retained_until` passes.
 
 
         **Not yet served on this path (0.4.0).** `format` other than `json`
@@ -350,6 +362,14 @@ paths:
         run reports, but *without* `dry_run`, because this request was not a
         dry run — rather than creating a job. Call `POST /v1/transcripts` to
         actually create one.
+
+
+        **Upload episodes.** `episode_id` may name an episode created from
+        the caller's own upload; it resolves against the upload's stored
+        revision, and an episode that resolves to another account's upload
+        answers `404` before a quote hint is computed or cache access runs.
+        A cached transcript stays readable after the source upload's
+        `retained_until` passes.
 
 
         **Delivery format.** `format: json` (or omitted) returns
@@ -691,6 +711,8 @@ paths:
                 $ref: '#/components/examples/QuoteFromChartRequest'
               fromShows:
                 $ref: '#/components/examples/QuoteFromShowsRequest'
+              fromUploads:
+                $ref: '#/components/examples/QuoteFromUploadsRequest'
       responses:
         '200':
           description: The recorded quote — priced entries, exclusions, clamps, totals, and headroom.
@@ -716,6 +738,56 @@ paths:
           $ref: '#/components/responses/InternalErrorApiKey'
         '503':
           $ref: '#/components/responses/DiscoveryUnavailableApiKey'
+  /v1/uploads:
+    post:
+      operationId: createUpload
+      tags: [Uploads]
+      summary: Announce a file to upload
+      security:
+        - apiKeyBearer: []
+      description: >-
+        Records what the caller knows about an audio file and returns a
+        presigned PUT for it. The URL is signed against the declared SHA-256,
+        so S3 refuses a body whose hash differs; the API never reads the
+        bytes. Send the file with exactly the `put_headers` returned. Then
+        name it in a quote as `uploads: [{ upload_id }]`.
+
+        The upload is private to the account: its transcript is cached for
+        this account alone. The upload becomes unavailable at
+        `retained_until`; a quote after that reports `upload_not_found`. Physical object and record cleanup
+        is asynchronous. Each account may announce at most 10 GiB across
+        100 unexpired uploads. Announcements reserve this allowance even
+        if no file is sent; capacity returns at their logical expiry.
+        A refusal returns `429 upload_quota_exceeded` before a PUT URL is issued.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUploadRequest'
+            examples:
+              default:
+                $ref: '#/components/examples/CreateUploadRequestExample'
+      responses:
+        '201':
+          description: The upload is recorded; PUT the file next.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadCreated'
+              examples:
+                default:
+                  $ref: '#/components/examples/UploadCreatedExample'
+        '400':
+          $ref: '#/components/responses/BadRequestApiKey'
+        '401':
+          $ref: '#/components/responses/UnauthorizedApiKey'
+        '409':
+          $ref: '#/components/responses/ConflictApiKeyUploadAccountState'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsApiKey'
+        '500':
+          $ref: '#/components/responses/InternalErrorApiKey'
   /v1/quotes/{quote_id}/confirm:
     post:
       operationId: confirmQuote
@@ -2220,8 +2292,9 @@ components:
     # than fitting inside it: they belong to every operation that *spends*,
     # whatever else that operation can conflict on. So they are listed on
     # each spending operation's own component — the two below, plus
-    # `ConflictApiKeyAccountState` for the episode read, whose only conflict
-    # they are — and on none of the operations that merely read. The
+    # `ConflictApiKeyAccountState` for the episode read and
+    # `ConflictApiKeyUploadAccountState` for an upload announcement, whose
+    # only conflict they are — and on none of the operations that merely read. The
     # component names still say what each one's *first* conflict was;
     # renaming them would churn every `$ref` and the generated types for a
     # label.
@@ -2287,6 +2360,28 @@ components:
         paid for is not refused — `GET /v1/reads/{read_id}` and the job poll
         take no money and answer a suspended account exactly as they answer
         an active one.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        X-RateLimit-Limit: { $ref: '#/components/headers/XRateLimitLimit' }
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ConflictApiKeyUploadAccountState:
+      description: >-
+        The account behind the key may not hold an upload allowance, so the
+        announcement was refused and no row was written and no PUT URL
+        signed. Codes: `account_suspended` (a billing or abuse hold — settle
+        it or contact support), `account_closed` (the account is being
+        deleted, or is deleted), `account_not_found` (no account row behind
+        this credential; sign in to the dashboard, which creates it). None is
+        retryable: the same request meets the same account.
+
+
+        This operation's only `409`. An announcement spends no credits, but
+        it holds storage against the account and hands back a URL that puts
+        bytes in our bucket, so it is refused on the same three states a
+        spending operation is.
       headers:
         X-Request-Id: { $ref: '#/components/headers/XRequestId' }
         X-RateLimit-Limit: { $ref: '#/components/headers/XRateLimitLimit' }
@@ -2380,8 +2475,9 @@ components:
             $ref: '#/components/schemas/Error'
     TooManyRequestsApiKey:
       description: >-
-        Codes `rate_limited` or `concurrency_limited`, from two different
-        limits and two different places. `rate_limited` is the per-account
+        Codes `rate_limited`, `concurrency_limited`, or
+        `upload_quota_exceeded`, from three different limits and three
+        different places. `rate_limited` is the per-account
         request rate, refused at the edge before the operation
         runs: it carries `Retry-After` and no `X-RateLimit-Limit`, because
         nothing that knows the caller's tier has run yet.
@@ -2389,6 +2485,13 @@ components:
         operation itself: it carries `X-RateLimit-Limit` like every other
         answered response, and no `Retry-After`, because it clears when one of
         the account's own jobs finishes rather than after a fixed wait.
+        `upload_quota_exceeded` is `POST /v1/uploads`' own admission refusal,
+        returned before a PUT URL is issued when the account already holds
+        its allowance (10 GiB across 100 unexpired uploads): like
+        `concurrency_limited` it carries `X-RateLimit-Limit` and no
+        `Retry-After`, because it clears when an upload's `retained_until`
+        passes rather than after a fixed wait; its `message` names the limits
+        hit and the earliest time enough capacity returns.
       headers:
         X-Request-Id: { $ref: '#/components/headers/XRequestId' }
         X-RateLimit-Limit: { $ref: '#/components/headers/XRateLimitLimit' }
@@ -2397,6 +2500,21 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+          examples:
+            uploadQuotaExceeded:
+              summary: Upload allowance exhausted; names the earliest capacity return time
+              value:
+                error:
+                  type: rate_limited
+                  code: upload_quota_exceeded
+                  message: >-
+                    This account already holds 100 unexpired uploads
+                    totalling 10 GiB, the account's allowance; enough
+                    capacity returns at 2026-09-24T10:00:00Z, when the
+                    oldest upload's reservation releases.
+                  doc_url: https://docs.audivo.dev/errors#upload_quota_exceeded
+                  request_id: req_3c8f1a9d2b4e
+                  retryable: true
     ContentBlockedApiKey:
       description: Code `content_blocked` — a publisher or legal block is active.
       headers:
@@ -2772,6 +2890,7 @@ components:
         - account_closed
         - account_not_found
         - tier_unchanged
+        - upload_quota_exceeded
       description: >-
         Every code the API returns, and the HTTP status it comes with.
         `invalid_request`, `invalid_url` → 400. `unauthenticated` → 401.
@@ -2785,7 +2904,9 @@ components:
         `show_not_found`, `unsafe_source`, `unsupported_codec`,
         `unsupported_language`, `duration_exceeded`, `size_exceeded`,
         `nothing_to_quote`, `credits_not_refundable` → 422. `content_blocked` →
-        451. `rate_limited`, `concurrency_limited` → 429. `internal_error`,
+        451. `rate_limited`, `concurrency_limited`, `upload_quota_exceeded` →
+        429; `upload_quota_exceeded` is retryable, at the earliest capacity
+        return time its message names. `internal_error`,
         `processing_failed` → 500. `discovery_unavailable`, `engine_unavailable`
         → 503. `processing_failed` also appears inside a failed job's `error`
         field rather than as a live status. Each code has a heading on the
@@ -2898,7 +3019,7 @@ components:
         - required: [code, type]
           properties:
             code:
-              enum: [rate_limited, concurrency_limited]
+              enum: [rate_limited, concurrency_limited, upload_quota_exceeded]
             type: { const: rate_limited }
         - required: [code, type]
           properties:
@@ -3210,10 +3331,11 @@ components:
         worth of credit precision.
     QuoteBasis:
       type: string
-      enum: [feed_metadata, probed]
+      enum: [feed_metadata, probed, declared]
       description: >-
         `feed_metadata` when the estimate is derived from feed-published
         duration; `probed` when a bounded enclosure probe measured it.
+        `declared` when the caller stated it for an upload (ADR-0031).
     EstimatedProcessingSeconds:
       type: integer
       minimum: 0
@@ -3747,6 +3869,103 @@ components:
       pattern: '^qte_[A-Za-z0-9]{16,32}$'
       maxLength: 40
       description: Opaque, server-generated quote identifier.
+    UploadId:
+      type: string
+      pattern: '^upl_[A-Za-z0-9]{16,32}$'
+      maxLength: 40
+      description: Opaque, server-generated upload identifier.
+    UploadContentType:
+      type: string
+      enum:
+        - audio/mpeg
+        - audio/mp3
+        - audio/mp4
+        - audio/m4a
+        - audio/x-m4a
+        - audio/aac
+        - audio/x-aac
+        - audio/ogg
+        - audio/opus
+        - audio/flac
+        - audio/x-flac
+        - audio/wav
+        - audio/x-wav
+        - audio/webm
+    CreateUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [sha256, bytes, content_type, declared_duration_seconds]
+      properties:
+        sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: The file's SHA-256, lowercase hex. The PUT is signed against it.
+        bytes:
+          type: integer
+          minimum: 1
+          maximum: 5368709120
+          description: The file's exact length; the PUT must carry the same `Content-Length`.
+        content_type:
+          $ref: '#/components/schemas/UploadContentType'
+        declared_duration_seconds:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 36000
+          description: >-
+            What the quote is priced from. A job whose audio runs past the
+            ceiling this reserves fails as `declared_duration_exceeded` and
+            releases the reservation.
+        title:
+          type: string
+          minLength: 1
+          maxLength: 300
+          description: How the entry is labelled; the private show is always "Uploads".
+    UploadCreated:
+      type: object
+      additionalProperties: false
+      required:
+        - upload_id
+        - put_url
+        - put_headers
+        - put_url_expires_at
+        - retained_until
+        - bytes
+        - content_type
+        - declared_duration_seconds
+        - title
+      properties:
+        upload_id:
+          $ref: '#/components/schemas/UploadId'
+        put_url:
+          type: string
+          format: uri
+          maxLength: 4096
+          description: Presigned `PUT`; send the file body with `put_headers` and nothing else.
+        put_headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Every header the PUT must carry, verbatim; they are part of the signature.
+        put_url_expires_at:
+          type: string
+          format: date-time
+        retained_until:
+          type: string
+          format: date-time
+          description: Logical upload expiry and allowance-release time; physical cleanup is asynchronous.
+        bytes:
+          type: integer
+          minimum: 1
+        content_type:
+          $ref: '#/components/schemas/UploadContentType'
+        declared_duration_seconds:
+          type: number
+          exclusiveMinimum: 0
+        title:
+          anyOf:
+            - type: string
+              maxLength: 300
+            - enum: [null]
     NamedShow:
       type: object
       additionalProperties: false
@@ -3860,10 +4079,33 @@ components:
             The music-led opt-in. A chart is uncurated, so music-led entries are
             excluded from the selection — each named in `excluded` — unless
             this is `true`.
+    QuoteFromUploads:
+      type: object
+      additionalProperties: false
+      required: [uploads]
+      properties:
+        uploads:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [upload_id]
+            properties:
+              upload_id:
+                $ref: '#/components/schemas/UploadId'
+      description: >-
+        Uploads the caller announced and sent. Each is verified with one
+        object head — present, the declared length, the declared hash — and
+        priced from its declared duration. One that fails the check comes
+        back in `excluded` as `upload_not_received` or `upload_mismatch`; an
+        unknown or expired id as `upload_not_found`.
     QuoteRequest:
       oneOf:
         - $ref: '#/components/schemas/QuoteFromShows'
         - $ref: '#/components/schemas/QuoteFromChart'
+        - $ref: '#/components/schemas/QuoteFromUploads'
     QuoteEntry:
       type: object
       additionalProperties: false
@@ -3916,7 +4158,10 @@ components:
         declared_duration_seconds:
           type: number
           minimum: 0
-          description: The feed's `<itunes:duration>`, in seconds — what the estimate is priced from.
+          description: The feed's `<itunes:duration>`, or the caller's declaration for an upload, in seconds — what the estimate is priced from.
+        upload_id:
+          $ref: '#/components/schemas/UploadId'
+          description: Present when the entry is an upload; `feed_url` is then the account's private `audivo://uploads/…` show.
     QuoteExclusionReason:
       type: string
       enum:
@@ -3935,6 +4180,9 @@ components:
         - episode_not_found
         - no_declared_duration
         - no_stable_asset_revision
+        - upload_not_found
+        - upload_not_received
+        - upload_mismatch
       description: >-
         Every reason a show or an episode can be missing from a quote, in one
         closed vocabulary shared by the selection rule and the quote: the caller reads one list, not two. The
@@ -4030,7 +4278,7 @@ components:
           $ref: '#/components/schemas/QuoteId'
         source:
           type: string
-          enum: [shows, chart]
+          enum: [shows, chart, uploads]
           description: Which request shape produced this quote.
         episodes_per_show:
           type: integer
@@ -5403,6 +5651,35 @@ components:
           - feed_url: 'https://feeds.example.com/decoder.xml'
             itunes_id: null
         episodes_per_show: 2
+    CreateUploadRequestExample:
+      summary: A 30-minute interview recorded locally
+      value:
+        sha256: 3f8a9c2b1d4e9f2c1d4e9f2c1d4e9f2c3f8a9c2b1d4e9f2c1d4e9f2c1d4e9f2c
+        bytes: 28934112
+        content_type: audio/mpeg
+        declared_duration_seconds: 1807.4
+        title: Interview take two
+    UploadCreatedExample:
+      summary: Where to PUT it
+      value:
+        upload_id: upl_7c1f0a9b3e2d4c5b6a7f8e9d
+        put_url: 'https://hark-uploads-prod-061039778683.s3.us-east-1.amazonaws.com/acct_v3tptvk6pnf5cdiq/upl_7c1f0a9b3e2d4c5b6a7f8e9d?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=3600&X-Amz-SignedHeaders=content-length%3Bcontent-type%3Bhost%3Bx-amz-checksum-sha256&X-Amz-Signature=0123456789abcdef'
+        put_headers:
+          content-type: audio/mpeg
+          content-length: '28934112'
+          x-amz-checksum-sha256: P4qcKx1OnywdTp88HU6fLD+KnCsdTp8sHU6fLB1Onyw=
+        put_url_expires_at: '2026-09-17T11:00:00Z'
+        retained_until: '2026-09-24T10:00:00Z'
+        bytes: 28934112
+        content_type: audio/mpeg
+        declared_duration_seconds: 1807.4
+        title: Interview take two
+    QuoteFromUploadsRequest:
+      summary: Price two uploads
+      value:
+        uploads:
+          - upload_id: upl_7c1f0a9b3e2d4c5b6a7f8e9d
+          - upload_id: upl_0b2c3d4e5f6a7b8c9d0e1f2a
     QuoteExample:
       summary: A Hobby-key quote — one cached entry, two uncached, one show past its depth
       value:

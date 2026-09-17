@@ -413,6 +413,7 @@ export function renderQuote(quote: QuoteResponse): Document {
         quote_ceiling_credits: entry.quote_ceiling_credits,
         quote_basis: entry.quote_basis,
         declared_duration_seconds: entry.declared_duration_seconds,
+        upload_id: entry.upload_id,
       })),
       excluded: quote.excluded.map((exclusion, index) => ({
         n: index + 1,

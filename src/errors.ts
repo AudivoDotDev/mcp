@@ -33,6 +33,10 @@ export const LOCAL_ERROR_CODES = [
   'api_unreachable',
   /** The API answered with something that is neither the operation's body nor an envelope. */
   'api_response_unreadable',
+  /** The file on disk is not one `upload_audio` can send: wrong container, unreadable, or empty. */
+  'file_not_supported',
+  /** The PUT to the presigned URL failed; the announcement stands, but nothing was sent. */
+  'upload_failed',
 ] as const;
 export type LocalErrorCode = (typeof LOCAL_ERROR_CODES)[number];
 export type ToolErrorCode = ApiErrorCode | LocalErrorCode;
@@ -86,6 +90,9 @@ export const ERROR_TYPES = {
   payment_required: 'payment_required',
   rate_limited: 'rate_limited',
   concurrency_limited: 'rate_limited',
+  // POST /v1/uploads's own admission refusal: the account's announced,
+  // unexpired uploads are already at the 10 GiB / 100-upload ceiling.
+  upload_quota_exceeded: 'rate_limited',
   engine_unavailable: 'unavailable',
   processing_failed: 'unavailable',
   discovery_unavailable: 'unavailable',
@@ -159,6 +166,8 @@ export class McpToolError extends Error {
 const LOCAL_TYPES: Readonly<Record<LocalErrorCode, { type: ApiErrorType; retryable: boolean }>> = {
   api_unreachable: { type: 'unavailable', retryable: true },
   api_response_unreadable: { type: 'unavailable', retryable: true },
+  file_not_supported: { type: 'invalid_request', retryable: false },
+  upload_failed: { type: 'unavailable', retryable: true },
 };
 
 /** A refusal this server makes without, or instead of, an API call. */

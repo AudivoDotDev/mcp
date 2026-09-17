@@ -104,6 +104,16 @@ describe('local refusals', () => {
     for (const code of LOCAL_ERROR_CODES) expect(API_ERROR_CODES).not.toContain(code);
     expect(Object.keys(ERROR_TYPES)).toEqual(API_ERROR_CODES);
   });
+
+  it('carries upload_quota_exceeded as rate_limited, and two local upload refusals', () => {
+    expect(ERROR_TYPES.upload_quota_exceeded).toBe('rate_limited');
+    const fileNotSupported = localError('file_not_supported', 'x');
+    expect(fileNotSupported).toMatchObject({ origin: 'mcp', retryable: false });
+    expect(fileNotSupported.type).toBe('invalid_request');
+    const uploadFailed = localError('upload_failed', 'x');
+    expect(uploadFailed).toMatchObject({ origin: 'mcp', retryable: true });
+    expect(uploadFailed.type).toBe('unavailable');
+  });
 });
 
 describe('scrubbing', () => {

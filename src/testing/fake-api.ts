@@ -34,11 +34,14 @@ export const EPISODE_ID_2 = 'ep_ponmlkjihgfedcba';
 export const FEED_URL = 'https://feeds.example.com/the-daily.rss';
 export const FEED_URL_2 = 'https://feeds.example.com/hard-fork.rss';
 export const REQUEST_ID = 'req_7f3a9c2b1d4e4f5a8b6c0d1e2f3a4b5c';
+export const UPLOAD_ID = 'upl_0123456789abcdef01234567';
 export const NOW = '2026-09-08T09:00:00.000Z';
 export const LATER = '2026-09-08T09:30:00.000Z';
 /** What the API hands back for an oversized artifact — and what must never reach a model. */
 export const PRESIGNED_URL =
   'https://hark-transcripts-staging.s3.eu-west-1.amazonaws.com/transcripts/abc.json.gz?X-Amz-Signature=deadbeef&X-Amz-Expires=86400';
+/** Presigned PUT for an announced upload; shaped like the real bucket, in the test account. */
+export const PRESIGNED_PUT_URL = `https://hark-uploads-test.s3.us-east-1.amazonaws.com/acct_1/${UPLOAD_ID}?X-Amz-Signature=deadbeef`;
 
 export function showSummary(
   overrides: Partial<Schemas['ShowSummary']> = {},
@@ -183,6 +186,22 @@ export const QUOTE: Schemas['QuoteResponse'] = {
   reserved_credits: 0,
   expires_at: LATER,
   created_at: NOW,
+};
+
+export const UPLOAD_CREATED: Schemas['UploadCreated'] = {
+  upload_id: UPLOAD_ID,
+  put_url: PRESIGNED_PUT_URL,
+  put_headers: {
+    'content-type': 'audio/mpeg',
+    'content-length': '4500000',
+    'x-amz-checksum-sha256': 'P4qcKx1OnywdTp88HU6fLD+KnCsdTp8sHU6fLB1Onyw=',
+  },
+  put_url_expires_at: '2026-09-08T10:00:00.000Z',
+  retained_until: '2026-09-15T09:00:00.000Z',
+  bytes: 4_500_000,
+  content_type: 'audio/mpeg',
+  declared_duration_seconds: 1800,
+  title: 'A test upload',
 };
 
 export const GROUP: Schemas['JobGroupResponse'] = {
@@ -351,6 +370,7 @@ export type FakeApiOptions = {
   readonly chart?: Schemas['ChartResponse'];
   readonly episodes?: Schemas['EpisodesListResponse'];
   readonly quote?: Schemas['QuoteResponse'];
+  readonly upload?: Schemas['UploadCreated'];
   readonly group?: Schemas['JobGroupResponse'];
   readonly groups?: Schemas['JobGroupsListResponse'];
   /** By job id; a job not named here is `404 job_not_found`. */
@@ -388,6 +408,7 @@ const ROUTES: readonly Route[] = [
   { method: 'GET', pattern: /^\/v1\/charts$/, operation: 'getChart' },
   { method: 'GET', pattern: /^\/v1\/shows\/([^/]+)\/episodes$/, operation: 'listShowEpisodes' },
   { method: 'POST', pattern: /^\/v1\/quotes$/, operation: 'createQuote' },
+  { method: 'POST', pattern: /^\/v1\/uploads$/, operation: 'createUpload' },
   { method: 'POST', pattern: /^\/v1\/quotes\/([^/]+)\/confirm$/, operation: 'confirmQuote' },
   { method: 'GET', pattern: /^\/v1\/groups$/, operation: 'listGroups' },
   { method: 'GET', pattern: /^\/v1\/groups\/([^/]+)$/, operation: 'getGroup' },
@@ -433,6 +454,8 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
         return json(200, options.episodes ?? EPISODES);
       case 'createQuote':
         return json(200, options.quote ?? QUOTE);
+      case 'createUpload':
+        return json(201, options.upload ?? UPLOAD_CREATED);
       case 'confirmQuote': {
         // The API's own half of the spending fence: a stated total
         // that disagrees with the quote's is refused, as the real one does.

@@ -79,6 +79,8 @@ const GROUP_ID_PATTERN = /^grp_[A-Za-z0-9]{16,32}$/;
 /** `ShowId` and `EpisodeId`: a prefix and sixteen base32 characters. */
 const SHOW_ID_PATTERN = /^sh_[a-z2-7]{16}$/;
 const EPISODE_ID_PATTERN = /^ep_[a-z2-7]{16}$/;
+/** `UploadId`: a prefix and 16 to 32 characters, opaque and server-generated. */
+const UPLOAD_ID_PATTERN = /^upl_[A-Za-z0-9]{16,32}$/;
 /** The contract's `Cursor`: opaque, at most 512 URL-safe characters. */
 const CURSOR_PATTERN = /^[A-Za-z0-9_-]{1,512}$/;
 const CURSOR_MAX_LENGTH = 512;
@@ -228,18 +230,23 @@ const listEpisodes = defineTool({
 
 // --- The quote and its confirm -----------------------------------------------------
 
+const uploadRef = z.object({
+  upload_id: z.string().regex(UPLOAD_ID_PATTERN).max(ID_MAX_LENGTH),
+});
+
 const quote = defineTool({
   name: 'quote',
   title: 'Price a selection',
   description:
     'Price a selection before spending; reserves nothing. Exactly one of shows (feed URLs from ' +
-    'search_shows or chart_shows) or chart (a category). Returns priced entries, exclusions with ' +
-    'reasons, total_ceiling_credits and confirm_with (what confirm takes). Also balance_credits ' +
-    "and reserved_credits: an API-key caller's only view of what it has left, since usage pages " +
-    'are dashboard-only.',
+    'search_shows or chart_shows), chart (a category), or uploads (ids from upload_audio). ' +
+    'Returns priced entries, exclusions with reasons, total_ceiling_credits and confirm_with ' +
+    "(what confirm takes). Also balance_credits and reserved_credits: an API-key caller's only " +
+    'view of what it has left, since usage pages are dashboard-only.',
   inputSchema: z.object({
     shows: z.array(namedShow).min(1).max(100).optional(),
     chart: chartSelection.optional(),
+    uploads: z.array(uploadRef).min(1).max(100).optional().describe('upload_id from upload_audio.'),
     episodes_per_show: z.int().min(1).max(100).optional().describe('Newest N per show; default 1.'),
     include_music_led: z.boolean().optional().describe('Chart only; default false.'),
   }),
@@ -251,8 +258,9 @@ const quote = defineTool({
   },
   handler: async (args, ctx) => {
     const call = requireCredential(ctx);
-    if ((args.shows === undefined) === (args.chart === undefined)) {
-      throw localError('invalid_request', 'pass exactly one of shows or chart');
+    const shapes = [args.shows, args.chart, args.uploads].filter((s) => s !== undefined).length;
+    if (shapes !== 1) {
+      throw localError('invalid_request', 'pass exactly one of shows, chart or uploads');
     }
     const body: QuoteRequest =
       args.shows !== undefined
@@ -263,15 +271,17 @@ const quote = defineTool({
               ? {}
               : { include_music_led: args.include_music_led }),
           }
-        : {
-            chart: {
-              category: args.chart!.category,
-              size: args.chart!.size ?? 10,
-              ...(args.chart!.language === undefined ? {} : { language: args.chart!.language }),
-            },
-            episodes_per_show: args.episodes_per_show ?? 1,
-            include_music_led: args.include_music_led ?? false,
-          };
+        : args.chart !== undefined
+          ? {
+              chart: {
+                category: args.chart.category,
+                size: args.chart.size ?? 10,
+                ...(args.chart.language === undefined ? {} : { language: args.chart.language }),
+              },
+              episodes_per_show: args.episodes_per_show ?? 1,
+              include_music_led: args.include_music_led ?? false,
+            }
+          : { uploads: args.uploads! };
     return renderQuote(await ctx.api.createQuote(call, body));
   },
 });

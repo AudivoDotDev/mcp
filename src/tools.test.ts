@@ -21,11 +21,13 @@ import {
   JOB_ID_2,
   JOB_ID_3,
   PRESIGNED_URL,
+  QUOTE,
   QUOTE_ID,
   READ_ID,
   REQUEST_ID,
   SHOW_ID,
   TOKEN,
+  UPLOAD_ID,
   errorEnvelope,
   fakeApi,
   jobStatus,
@@ -254,6 +256,50 @@ describe('quote', () => {
     const both = { shows: [{ feed_url: FEED_URL }], chart: { category: 'News' } };
     expect(await fail('quote', both)).toMatchObject({ code: 'invalid_request' });
     expect(api.calls).toHaveLength(0);
+  });
+
+  it('POSTs an uploads selection as the only body field, with no episodes_per_show', async () => {
+    const { api, run } = harness();
+    await run('quote', { uploads: [{ upload_id: UPLOAD_ID }] });
+    const [call] = api.callsTo('createQuote');
+    expect(call!.body).toEqual({ uploads: [{ upload_id: UPLOAD_ID }] });
+  });
+
+  it('refuses uploads together with shows, naming all three shapes', async () => {
+    const { api, fail } = harness();
+    const error = await fail('quote', {
+      shows: [{ feed_url: FEED_URL }],
+      uploads: [{ upload_id: UPLOAD_ID }],
+    });
+    expect(error).toMatchObject({ origin: 'mcp', code: 'invalid_request' });
+    expect(error.message).toContain('shows');
+    expect(error.message).toContain('chart');
+    expect(error.message).toContain('uploads');
+    expect(api.calls).toHaveLength(0);
+  });
+
+  it("refuses a malformed upload_id by the tool's own schema", () => {
+    expect(
+      toolNamed('quote').inputSchema.safeParse({ uploads: [{ upload_id: 'not-an-upload-id' }] })
+        .success,
+    ).toBe(false);
+  });
+
+  it('carries upload_id on the entry the API sent it for, and not on the others', async () => {
+    const { run } = harness({
+      quote: {
+        ...QUOTE,
+        source: 'uploads',
+        entries: [
+          ...QUOTE.entries,
+          { ...QUOTE.entries[0]!, upload_id: UPLOAD_ID, quote_basis: 'declared' },
+        ],
+      },
+    });
+    const doc = await run('quote', { uploads: [{ upload_id: UPLOAD_ID }] });
+    const entries = (doc.trusted as { entries: { upload_id?: string | null }[] }).entries;
+    expect(entries[0]!.upload_id).toBeUndefined();
+    expect(entries[2]!.upload_id).toBe(UPLOAD_ID);
   });
 });
 

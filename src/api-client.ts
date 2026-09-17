@@ -29,6 +29,13 @@ type Ok<Op extends keyof operations> = operations[Op] extends {
   ? T
   : never;
 
+/** `Ok`'s twin for an operation whose success status is `201`, not `200`. */
+type Ok201<Op extends keyof operations> = operations[Op] extends {
+  responses: { 201: { content: { 'application/json': infer T } } };
+}
+  ? T
+  : never;
+
 export type SearchQuery = operations['searchShows']['parameters']['query'];
 export type ShowSearchResponse = Ok<'searchShows'>;
 export type ChartQuery = operations['getChart']['parameters']['query'];
@@ -37,6 +44,8 @@ export type EpisodesListResponse = Ok<'listShowEpisodes'>;
 export type EpisodeSummary = components['schemas']['EpisodeSummary'];
 export type QuoteRequest = components['schemas']['QuoteRequest'];
 export type QuoteResponse = Ok<'createQuote'>;
+export type CreateUploadRequest = components['schemas']['CreateUploadRequest'];
+export type UploadCreated = Ok201<'createUpload'>;
 export type ConfirmRequest = components['schemas']['ConfirmRequest'];
 export type JobGroupResponse = Ok<'confirmQuote'>;
 export type ListGroupsQuery = NonNullable<operations['listGroups']['parameters']['query']>;
@@ -57,6 +66,7 @@ export const API_PATHS = {
   getChart: '/v1/charts',
   listShowEpisodes: '/v1/shows/{show_id}/episodes',
   createQuote: '/v1/quotes',
+  createUpload: '/v1/uploads',
   confirmQuote: '/v1/quotes/{quote_id}/confirm',
   listGroups: '/v1/groups',
   getGroup: '/v1/groups/{group_id}',
@@ -142,6 +152,8 @@ export type ApiClient = {
     },
   ): Promise<EpisodesListResponse>;
   createQuote(call: ApiCall, body: QuoteRequest): Promise<QuoteResponse>;
+  /** Announces a file to upload; PUT it next with exactly the returned `put_headers`. */
+  createUpload(call: ApiCall, body: CreateUploadRequest): Promise<UploadCreated>;
   confirmQuote(
     call: ApiCall,
     params: {
@@ -279,6 +291,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         } satisfies Record<keyof operations['listShowEpisodes']['parameters']['query'], QueryValue>,
       }),
     createQuote: (call, body) => send(call, 'createQuote', { method: 'POST', path: {}, body }),
+    createUpload: (call, body) => send(call, 'createUpload', { method: 'POST', path: {}, body }),
     confirmQuote: (call, params) =>
       send(call, 'confirmQuote', {
         method: 'POST',

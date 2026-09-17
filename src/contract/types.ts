@@ -19,6 +19,8 @@ export interface paths {
      *
      *     **Every job belongs to a group.** A single-episode submission is a job group of one: the same submission sequence a quote's confirm fans out over N members, run once, so the two can never disagree. The accepted job carries its `group_id`, which `GET /v1/groups/{group_id}` and `POST /v1/groups/{group_id}/cancel` accept. An `Idempotency-Key`, when sent, is honoured at the group: a repeat returns the original job — or the original cached read — and charges nothing further; its `status` is then the job's current state. A repeat that arrives while the original is still running — its group begun, its member not yet landed — is `409 request_in_progress`: retry with the same key shortly, never a new one, which would start a second job for the same episode.
      *
+     *     **Upload episodes.** `episode_id` may name an episode created from the caller's own upload; it resolves against the upload's stored revision, and an episode that resolves to another account's upload answers `404` before dry-run pricing or cache access runs. A cache miss still prices and reserves at the upload's declared-duration ceiling, and may subsequently fail `upload_missing` if the underlying object has since expired. A cached transcript stays readable after the source upload's `retained_until` passes.
+     *
      *     **Not yet served on this path (0.4.0).** `format` other than `json` is refused with `invalid_request` here — the read operations
      *     deliver the raw formats — and a cache hit above the inline limit is delivered by reference as `TranscriptRead.transcript_url`; `language` is accepted and recorded nowhere.
      *
@@ -65,6 +67,8 @@ export interface paths {
     /**
      * Direct cached fetch of an episode's transcript
      * @description Fetches a compatible cached transcript for a canonical episode directly, without submitting a job. When no compatible cache object exists, returns an `EpisodeQuoteHint` — the same quote figures a dry run reports, but *without* `dry_run`, because this request was not a dry run — rather than creating a job. Call `POST /v1/transcripts` to actually create one.
+     *
+     *     **Upload episodes.** `episode_id` may name an episode created from the caller's own upload; it resolves against the upload's stored revision, and an episode that resolves to another account's upload answers `404` before a quote hint is computed or cache access runs. A cached transcript stays readable after the source upload's `retained_until` passes.
      *
      *     **Delivery format.** `format: json` (or omitted) returns `application/json`. `format: text|srt|vtt|md` returns the raw artifact under its own media type (`text/plain`, `application/x-subrip`, `text/vtt`, `text/markdown`), with provenance in the `X-Transcript-Episode-Id`, `X-Transcript-Source`, and `X-Transcript-Timing-Precision` headers and the charge in `X-Credits-Charged`. **The single content-type switch:** a payload over the ~5 MB inline limit returns `200 application/json` with `{ transcript_url, expires_at }` in *every* format. A quote hint — no cached transcript exists to render — is always `application/json`, whatever `format` asked for.
      */
@@ -169,6 +173,27 @@ export interface paths {
      *     Every priced entry carries the domain's estimate and its ceiling; a cached entry is priced at what a cached read costs *this* account — the floor for the account whose job produced the transcript, a fraction of its measured audio minutes for anyone else — with no ceiling above it. `remaining_open_jobs` is the caller's fan-out headroom under their tier's open-job cap — jobs reserved and not yet terminal — reported so a selection can be sized before spending. It is enforced at confirm, not here. `balance_credits` and `reserved_credits` ride beside it off the same account row, so an agent sees what it holds at the moment it decides to spend; they are reported on the same terms, and a balance too small for `total_ceiling_credits` does not refuse the quote.
      */
     post: operations['createQuote'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/uploads': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Announce a file to upload
+     * @description Records what the caller knows about an audio file and returns a presigned PUT for it. The URL is signed against the declared SHA-256, so S3 refuses a body whose hash differs; the API never reads the bytes. Send the file with exactly the `put_headers` returned. Then name it in a quote as `uploads: [{ upload_id }]`.
+     *     The upload is private to the account: its transcript is cached for this account alone. The upload becomes unavailable at `retained_until`; a quote after that reports `upload_not_found`. Physical object and record cleanup is asynchronous. Each account may announce at most 10 GiB across 100 unexpired uploads. Announcements reserve this allowance even if no file is sent; capacity returns at their logical expiry. A refusal returns `429 upload_quota_exceeded` before a PUT URL is issued.
+     */
+    post: operations['createUpload'];
     delete?: never;
     options?: never;
     head?: never;
@@ -731,7 +756,7 @@ export interface components {
       | 'rate_limited'
       | 'unavailable';
     /**
-     * @description Every code the API returns, and the HTTP status it comes with. `invalid_request`, `invalid_url` → 400. `unauthenticated` → 401. `payment_required` → 402. `job_not_found`, `quote_not_found`, `group_not_found`, `api_key_not_found`, `credit_lot_not_found` → 404. `idempotency_conflict`, `request_in_progress`, `job_not_completed`, `quote_expired`, `quote_mismatch`, `quote_unverified`, `expected_total_mismatch`, `account_suspended`, `account_closed`, `account_not_found`, `api_key_limit_reached`, `tier_unchanged` → 409. `source_not_supported`, `feed_dead`, `episode_not_found`, `show_not_found`, `unsafe_source`, `unsupported_codec`, `unsupported_language`, `duration_exceeded`, `size_exceeded`, `nothing_to_quote`, `credits_not_refundable` → 422. `content_blocked` → 451. `rate_limited`, `concurrency_limited` → 429. `internal_error`, `processing_failed` → 500. `discovery_unavailable`, `engine_unavailable` → 503. `processing_failed` also appears inside a failed job's `error` field rather than as a live status. Each code has a heading on the documentation site's errors page, which is what `doc_url` links to.
+     * @description Every code the API returns, and the HTTP status it comes with. `invalid_request`, `invalid_url` → 400. `unauthenticated` → 401. `payment_required` → 402. `job_not_found`, `quote_not_found`, `group_not_found`, `api_key_not_found`, `credit_lot_not_found` → 404. `idempotency_conflict`, `request_in_progress`, `job_not_completed`, `quote_expired`, `quote_mismatch`, `quote_unverified`, `expected_total_mismatch`, `account_suspended`, `account_closed`, `account_not_found`, `api_key_limit_reached`, `tier_unchanged` → 409. `source_not_supported`, `feed_dead`, `episode_not_found`, `show_not_found`, `unsafe_source`, `unsupported_codec`, `unsupported_language`, `duration_exceeded`, `size_exceeded`, `nothing_to_quote`, `credits_not_refundable` → 422. `content_blocked` → 451. `rate_limited`, `concurrency_limited`, `upload_quota_exceeded` → 429; `upload_quota_exceeded` is retryable, at the earliest capacity return time its message names. `internal_error`, `processing_failed` → 500. `discovery_unavailable`, `engine_unavailable` → 503. `processing_failed` also appears inside a failed job's `error` field rather than as a live status. Each code has a heading on the documentation site's errors page, which is what `doc_url` links to.
      * @enum {string}
      */
     ErrorCode:
@@ -773,7 +798,8 @@ export interface components {
       | 'account_suspended'
       | 'account_closed'
       | 'account_not_found'
-      | 'tier_unchanged';
+      | 'tier_unchanged'
+      | 'upload_quota_exceeded';
     ErrorDetail: {
       type: components['schemas']['ErrorType'];
       code: components['schemas']['ErrorCode'];
@@ -852,7 +878,7 @@ export interface components {
         }
       | {
           /** @enum {unknown} */
-          code: 'rate_limited' | 'concurrency_limited';
+          code: 'rate_limited' | 'concurrency_limited' | 'upload_quota_exceeded';
           /** @constant */
           type: 'rate_limited';
         }
@@ -974,10 +1000,10 @@ export interface components {
     /** @description A non-negative JavaScript-safe integer credit amount. The upper bound matches `Number.MAX_SAFE_INTEGER`, which is enforced by the domain ledger so arithmetic and JSON round-trips cannot silently lose cents worth of credit precision. */
     CreditAmount: number;
     /**
-     * @description `feed_metadata` when the estimate is derived from feed-published duration; `probed` when a bounded enclosure probe measured it.
+     * @description `feed_metadata` when the estimate is derived from feed-published duration; `probed` when a bounded enclosure probe measured it. `declared` when the caller stated it for an upload (ADR-0031).
      * @enum {string}
      */
-    QuoteBasis: 'feed_metadata' | 'probed';
+    QuoteBasis: 'feed_metadata' | 'probed' | 'declared';
     /**
      * @description Estimated **wall-clock** seconds until the job reaches a terminal state — intended for choosing a poll interval. This is *not* audio duration: audio duration has its own field (`duration_sec` on the transcript, `duration_sec` on `EpisodeSummary`), and conflating the two silently misprices everything a caller derives from it. The committed examples only make sense under this reading: `estimated_seconds: 420` alongside `estimated_credits: 268` cannot be audio seconds, because 7 audio minutes bills 7 credits at `CREDITS_PER_AUDIO_MINUTE`, while 268 credits is about 4.5 hours of audio.
      *
@@ -1147,6 +1173,58 @@ export interface components {
     };
     /** @description Opaque, server-generated quote identifier. */
     QuoteId: string;
+    /** @description Opaque, server-generated upload identifier. */
+    UploadId: string;
+    /** @enum {string} */
+    UploadContentType:
+      | 'audio/mpeg'
+      | 'audio/mp3'
+      | 'audio/mp4'
+      | 'audio/m4a'
+      | 'audio/x-m4a'
+      | 'audio/aac'
+      | 'audio/x-aac'
+      | 'audio/ogg'
+      | 'audio/opus'
+      | 'audio/flac'
+      | 'audio/x-flac'
+      | 'audio/wav'
+      | 'audio/x-wav'
+      | 'audio/webm';
+    CreateUploadRequest: {
+      /** @description The file's SHA-256, lowercase hex. The PUT is signed against it. */
+      sha256: string;
+      /** @description The file's exact length; the PUT must carry the same `Content-Length`. */
+      bytes: number;
+      content_type: components['schemas']['UploadContentType'];
+      /** @description What the quote is priced from. A job whose audio runs past the ceiling this reserves fails as `declared_duration_exceeded` and releases the reservation. */
+      declared_duration_seconds: number;
+      /** @description How the entry is labelled; the private show is always "Uploads". */
+      title?: string;
+    };
+    UploadCreated: {
+      upload_id: components['schemas']['UploadId'];
+      /**
+       * Format: uri
+       * @description Presigned `PUT`; send the file body with `put_headers` and nothing else.
+       */
+      put_url: string;
+      /** @description Every header the PUT must carry, verbatim; they are part of the signature. */
+      put_headers: {
+        [key: string]: string;
+      };
+      /** Format: date-time */
+      put_url_expires_at: string;
+      /**
+       * Format: date-time
+       * @description Logical upload expiry and allowance-release time; physical cleanup is asynchronous.
+       */
+      retained_until: string;
+      bytes: number;
+      content_type: components['schemas']['UploadContentType'];
+      declared_duration_seconds: number;
+      title: string | null;
+    };
     /**
      * @description A show the caller chooses by feed URL — usually copied from a `ShowSummary`. `itunes_id` travels with it because it changes how `show_id` derives; `title` is only the label the quote shows back, and defaults to the feed URL.
      *
@@ -1192,7 +1270,16 @@ export interface components {
        */
       include_music_led: boolean;
     };
-    QuoteRequest: components['schemas']['QuoteFromShows'] | components['schemas']['QuoteFromChart'];
+    /** @description Uploads the caller announced and sent. Each is verified with one object head — present, the declared length, the declared hash — and priced from its declared duration. One that fails the check comes back in `excluded` as `upload_not_received` or `upload_mismatch`; an unknown or expired id as `upload_not_found`. */
+    QuoteFromUploads: {
+      uploads: {
+        upload_id: components['schemas']['UploadId'];
+      }[];
+    };
+    QuoteRequest:
+      | components['schemas']['QuoteFromShows']
+      | components['schemas']['QuoteFromChart']
+      | components['schemas']['QuoteFromUploads'];
     /** @description One priced episode. An uncached entry carries the domain's estimate from the feed-declared duration and its ceiling; a cached one is priced at what a cached read costs the calling account with no ceiling above it — there is no measurement left to exceed. */
     QuoteEntry: {
       episode_id: components['schemas']['EpisodeId'];
@@ -1206,8 +1293,10 @@ export interface components {
       estimated_credits: components['schemas']['CreditAmount'];
       quote_ceiling_credits: components['schemas']['CreditAmount'];
       quote_basis: components['schemas']['QuoteBasis'];
-      /** @description The feed's `<itunes:duration>`, in seconds — what the estimate is priced from. */
+      /** @description The feed's `<itunes:duration>`, or the caller's declaration for an upload, in seconds — what the estimate is priced from. */
       declared_duration_seconds: number;
+      /** @description Present when the entry is an upload; `feed_url` is then the account's private `audivo://uploads/…` show. */
+      upload_id?: components['schemas']['UploadId'];
     };
     /**
      * @description Every reason a show or an episode can be missing from a quote, in one closed vocabulary shared by the selection rule and the quote: the caller reads one list, not two. The `nothing_to_quote` error message counts these same words.
@@ -1228,7 +1317,10 @@ export interface components {
       | 'episode_not_in_feed'
       | 'episode_not_found'
       | 'no_declared_duration'
-      | 'no_stable_asset_revision';
+      | 'no_stable_asset_revision'
+      | 'upload_not_found'
+      | 'upload_not_received'
+      | 'upload_mismatch';
     /** @description One thing the caller asked for that is not in `entries`. `guid` is `null` when a whole show was excluded; `feed_url` is `null` only when the provider carried none. `title` is what a surface shows a human — the show's name, or `show — episode` for one episode. */
     QuoteExclusion: {
       feed_url: components['schemas']['FeedUrl'] | null;
@@ -1259,7 +1351,7 @@ export interface components {
        * @description Which request shape produced this quote.
        * @enum {string}
        */
-      source: 'shows' | 'chart';
+      source: 'shows' | 'chart' | 'uploads';
       /** @description The N after the tier had its say. */
       episodes_per_show: number;
       entries: components['schemas']['QuoteEntry'][];
@@ -1711,6 +1803,21 @@ export interface components {
         'application/json': components['schemas']['Error'];
       };
     };
+    /**
+     * @description The account behind the key may not hold an upload allowance, so the announcement was refused and no row was written and no PUT URL signed. Codes: `account_suspended` (a billing or abuse hold — settle it or contact support), `account_closed` (the account is being deleted, or is deleted), `account_not_found` (no account row behind this credential; sign in to the dashboard, which creates it). None is retryable: the same request meets the same account.
+     *
+     *     This operation's only `409`. An announcement spends no credits, but it holds storage against the account and hands back a URL that puts bytes in our bucket, so it is refused on the same three states a spending operation is.
+     */
+    ConflictApiKeyUploadAccountState: {
+      headers: {
+        'X-Request-Id': components['headers']['XRequestId'];
+        'X-RateLimit-Limit': components['headers']['XRateLimitLimit'];
+        [name: string]: unknown;
+      };
+      content: {
+        'application/json': components['schemas']['Error'];
+      };
+    };
     /** @description Code `job_not_completed` — a non-`json` `?format=` was requested (`PollFormatQueryParam`) on a job that has not reached `completed`; keep polling with no `format` or with `format=json`. */
     ConflictApiKeyJobNotCompleted: {
       headers: {
@@ -1777,7 +1884,7 @@ export interface components {
         'application/json': components['schemas']['Error'];
       };
     };
-    /** @description Codes `rate_limited` or `concurrency_limited`, from two different limits and two different places. `rate_limited` is the per-account request rate, refused at the edge before the operation runs: it carries `Retry-After` and no `X-RateLimit-Limit`, because nothing that knows the caller's tier has run yet. `concurrency_limited` is the cap on jobs open at once, refused by the operation itself: it carries `X-RateLimit-Limit` like every other answered response, and no `Retry-After`, because it clears when one of the account's own jobs finishes rather than after a fixed wait. */
+    /** @description Codes `rate_limited`, `concurrency_limited`, or `upload_quota_exceeded`, from three different limits and three different places. `rate_limited` is the per-account request rate, refused at the edge before the operation runs: it carries `Retry-After` and no `X-RateLimit-Limit`, because nothing that knows the caller's tier has run yet. `concurrency_limited` is the cap on jobs open at once, refused by the operation itself: it carries `X-RateLimit-Limit` like every other answered response, and no `Retry-After`, because it clears when one of the account's own jobs finishes rather than after a fixed wait. `upload_quota_exceeded` is `POST /v1/uploads`' own admission refusal, returned before a PUT URL is issued when the account already holds its allowance (10 GiB across 100 unexpired uploads): like `concurrency_limited` it carries `X-RateLimit-Limit` and no `Retry-After`, because it clears when an upload's `retained_until` passes rather than after a fixed wait; its `message` names the limits hit and the earliest time enough capacity returns. */
     TooManyRequestsApiKey: {
       headers: {
         'X-Request-Id': components['headers']['XRequestId'];
@@ -2312,6 +2419,35 @@ export interface operations {
       429: components['responses']['TooManyRequestsApiKey'];
       500: components['responses']['InternalErrorApiKey'];
       503: components['responses']['DiscoveryUnavailableApiKey'];
+    };
+  };
+  createUpload: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateUploadRequest'];
+      };
+    };
+    responses: {
+      /** @description The upload is recorded; PUT the file next. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UploadCreated'];
+        };
+      };
+      400: components['responses']['BadRequestApiKey'];
+      401: components['responses']['UnauthorizedApiKey'];
+      409: components['responses']['ConflictApiKeyUploadAccountState'];
+      429: components['responses']['TooManyRequestsApiKey'];
+      500: components['responses']['InternalErrorApiKey'];
     };
   };
   confirmQuote: {

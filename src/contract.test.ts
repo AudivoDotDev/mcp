@@ -37,6 +37,7 @@ import {
   READ_ID,
   SEARCH,
   SHOW_ID,
+  UPLOAD_CREATED,
   errorEnvelope,
   fakeApi,
   jobStatus,
@@ -100,6 +101,9 @@ function operationOf(operationId: string) {
 }
 
 const OPERATIONS = Object.keys(API_PATHS) as ApiOperation[];
+// createUpload joins this sweep once a tool sends it (upload_audio, a later
+// task): nothing here calls it yet, so it would fail "was never sent".
+const SENT_OPERATIONS = OPERATIONS.filter((operation) => operation !== 'createUpload');
 
 describe('the fixtures the suites run against', () => {
   it.each([
@@ -111,9 +115,20 @@ describe('the fixtures the suites run against', () => {
     ['JobGroupsListResponse', GROUPS],
     ['JobStatus', jobStatus()],
     ['TranscriptRead', transcriptRead()],
+    ['UploadCreated', UPLOAD_CREATED],
     ['Error', errorEnvelope({ code: 'payment_required', type: 'payment_required' })],
   ])('%s validates against the contract', (name, fixture) => {
     validate(schemaOf(name), fixture);
+  });
+
+  it("validates a literal CreateUploadRequest against the contract's schema", () => {
+    validate(schemaOf('CreateUploadRequest'), {
+      sha256: 'a'.repeat(64),
+      bytes: 4_500_000,
+      content_type: 'audio/mpeg',
+      declared_duration_seconds: 1800,
+      title: 'A test upload',
+    });
   });
 });
 
@@ -185,7 +200,7 @@ describe('what each tool sends', () => {
     }
   });
 
-  it.each(OPERATIONS)("%s hits the contract's path and method", (operationId) => {
+  it.each(SENT_OPERATIONS)("%s hits the contract's path and method", (operationId) => {
     const { path, method } = operationOf(operationId);
     expect(API_PATHS[operationId]).toBe(path);
     const call = sent[operationId];
@@ -195,7 +210,7 @@ describe('what each tool sends', () => {
     expect(call!.path).toMatch(new RegExp(`^${template}$`));
   });
 
-  it.each(OPERATIONS)('%s sends only declared query parameters, all required ones', (id) => {
+  it.each(SENT_OPERATIONS)('%s sends only declared query parameters, all required ones', (id) => {
     const { operation } = operationOf(id);
     const call = sent[id]!;
     const declared = (operation.parameters ?? []).filter((parameter) => parameter.in === 'query');
@@ -210,7 +225,7 @@ describe('what each tool sends', () => {
     }
   });
 
-  it.each(OPERATIONS)('%s sends a body only when the operation takes one', (id) => {
+  it.each(SENT_OPERATIONS)('%s sends a body only when the operation takes one', (id) => {
     const { operation } = operationOf(id);
     const call = sent[id]!;
     const bodySchema = operation.requestBody?.content['application/json']?.schema;
