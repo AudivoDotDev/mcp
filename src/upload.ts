@@ -29,6 +29,19 @@ export type AudioFileFacts = {
   readonly contentType: string | null;
   readonly durationSeconds: number | null;
   readonly container: string | null;
+  /**
+   * `file-type`'s raw detected MIME, ahead of `contentTypeFor` mapping it
+   * into the contract's enum (or dropping it to `null` when the mapping
+   * table has no entry for it). `null` means detection found nothing at
+   * all; a non-null value outside the `audio/`/`video/` prefixes means
+   * detection found something and that something is not audio, for example
+   * `application/pdf`. `contentType` alone cannot make this distinction:
+   * it is `null` both when nothing was detected and when something was
+   * detected but is not on the contract's list, yet a caller's explicit
+   * `content_type` should be trusted in the first case and refused in the
+   * second, so callers needing that distinction read `detectedMime`.
+   */
+  readonly detectedMime: string | null;
 };
 
 /**
@@ -116,6 +129,7 @@ export async function inspectAudioFile(path: string): Promise<AudioFileFacts> {
     contentType: contentTypeFor(detected?.mime ?? null),
     durationSeconds: parsed?.format.duration ?? null,
     container: parsed?.format.container ?? null,
+    detectedMime: detected?.mime ?? null,
   };
 }
 

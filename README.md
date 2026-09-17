@@ -104,9 +104,10 @@ send them.
 
 This tool is local server only. Try it with:
 
-> Upload ~/Downloads/interview.m4a and transcribe it
+> Upload /Users/alex/Downloads/interview.m4a and transcribe it
 
-The tool announces the file to Audivo (its hash, size, content type, and declared duration), then
+The `path` must be absolute; a path relative to some directory the MCP client happened to start in
+would not name a stable file. The tool announces the file to Audivo (its hash, size, content type, and declared duration), then
 uploads the bytes straight to Audivo's storage with the signed URL the announcement returns. That
 call answers with an `upload_id`; pass it to `quote` as `uploads: [{ upload_id }]`, then `confirm`
 to pay for the transcript, exactly like any other quote.

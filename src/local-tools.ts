@@ -139,9 +139,34 @@ export function localTools(options: LocalToolOptions = {}): readonly AnyToolDefi
         );
       }
 
-      const detected = facts.contentType;
-      const contentType =
-        args.content_type ?? (detected !== null && isUploadContentType(detected) ? detected : null);
+      // An explicit `content_type` is honoured when detection found nothing
+      // to contradict it (`detectedMime === null`) or when what it found is
+      // audio or video (a container `MIME_CONTENT_TYPES` has no entry for,
+      // such as Matroska, still gets the benefit of the doubt). Detection
+      // finding something that is neither, a PDF, a PNG, any file that is
+      // plainly not audio, refuses the upload outright: a caller's
+      // `content_type` names what the bytes should be sent as, not what they
+      // actually are, and honouring it there would let any file on disk be
+      // announced as audio.
+      let contentType: UploadContentType | null;
+      if (args.content_type !== undefined) {
+        const detectedMime = facts.detectedMime;
+        if (
+          detectedMime !== null &&
+          !detectedMime.startsWith('audio/') &&
+          !detectedMime.startsWith('video/')
+        ) {
+          throw localError(
+            'file_not_supported',
+            `the file here is ${detectedMime}, not audio; content_type cannot override what a file ` +
+              'actually is',
+          );
+        }
+        contentType = args.content_type;
+      } else {
+        const detected = facts.contentType;
+        contentType = detected !== null && isUploadContentType(detected) ? detected : null;
+      }
       if (contentType === null) {
         throw localError(
           'file_not_supported',
@@ -161,7 +186,8 @@ export function localTools(options: LocalToolOptions = {}): readonly AnyToolDefi
         throw localError(
           'invalid_request',
           `the duration here (${duration}s) is outside what an upload may declare: ` +
-            `above 0 and at most ${MAX_DECLARED_DURATION_SECONDS} seconds`,
+            `above 0 and at most ${MAX_DECLARED_DURATION_SECONDS} seconds; pass ` +
+            'declared_duration_seconds with the real duration (a container reporting 0 is the common case)',
         );
       }
 

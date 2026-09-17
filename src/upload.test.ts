@@ -62,6 +62,7 @@ describe('inspectAudioFile', () => {
     expect(facts.sha256).toBe(createHash('sha256').update(wav).digest('hex'));
     expect(facts.container).toBe('WAVE');
     expect(facts.contentType).toBe('audio/wav');
+    expect(facts.detectedMime).toBe('audio/wav');
     expect(facts.durationSeconds).not.toBeNull();
     expect(Math.abs((facts.durationSeconds as number) - 2.5)).toBeLessThan(0.01);
   });
@@ -79,6 +80,7 @@ describe('inspectAudioFile', () => {
     expect(facts.contentType).toBeNull();
     expect(facts.durationSeconds).toBeNull();
     expect(facts.container).toBeNull();
+    expect(facts.detectedMime).toBeNull();
   });
 
   it('refuses a directory as invalid_request', async () => {
@@ -105,6 +107,7 @@ describe('inspectAudioFile', () => {
     const facts = await inspectAudioFile(filePath);
 
     expect(facts.contentType).toBe('audio/opus');
+    expect(facts.detectedMime).toBe('audio/ogg; codecs=opus');
   });
 
   it('refuses a path that names nothing on disk as invalid_request from mcp', async () => {

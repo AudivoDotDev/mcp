@@ -87,6 +87,7 @@ function facts(overrides: Partial<AudioFileFacts> = {}): AudioFileFacts {
     contentType: 'audio/wav',
     durationSeconds: SECONDS,
     container: 'WAVE',
+    detectedMime: 'audio/wav',
     ...overrides,
   };
 }
@@ -143,13 +144,29 @@ describe('upload_audio announces the file', () => {
 
   it('takes an explicit content_type for a container it could not place', async () => {
     const { api, run } = harness({
-      inspect: inspectAs({ contentType: null, container: 'Matroska' }),
+      inspect: inspectAs({
+        contentType: null,
+        container: 'Matroska',
+        detectedMime: 'video/x-matroska',
+      }),
     });
 
     await run({ path: '/tmp/clip.mkv', content_type: 'audio/webm' });
 
     expect((api.callsTo('createUpload')[0]!.body as { content_type: string }).content_type).toBe(
       'audio/webm',
+    );
+  });
+
+  it('takes an explicit content_type when detection found nothing at all', async () => {
+    const { api, run } = harness({
+      inspect: inspectAs({ contentType: null, container: null, detectedMime: null }),
+    });
+
+    await run({ path: '/tmp/mystery.bin', content_type: 'audio/mpeg' });
+
+    expect((api.callsTo('createUpload')[0]!.body as { content_type: string }).content_type).toBe(
+      'audio/mpeg',
     );
   });
 
@@ -290,7 +307,11 @@ describe('upload_audio refuses', () => {
 
   it('a container it does not recognise, naming what it saw and what it takes', async () => {
     const { api, fail } = harness({
-      inspect: inspectAs({ contentType: null, container: 'Matroska' }),
+      inspect: inspectAs({
+        contentType: null,
+        container: 'Matroska',
+        detectedMime: 'video/x-matroska',
+      }),
     });
 
     const error = await fail({ path: '/tmp/clip.mkv' });
@@ -299,6 +320,18 @@ describe('upload_audio refuses', () => {
     expect(error.retryable).toBe(false);
     expect(error.message).toContain('Matroska');
     expect(error.message).toContain('audio/mpeg');
+    expect(api.calls).toEqual([]);
+  });
+
+  it('a non-audio file even with an explicit content_type, naming what detection actually found', async () => {
+    const { api, fail } = harness({
+      inspect: inspectAs({ contentType: null, container: null, detectedMime: 'application/pdf' }),
+    });
+
+    const error = await fail({ path: '/tmp/resume.pdf', content_type: 'audio/mpeg' });
+
+    expect(error.code).toBe('file_not_supported');
+    expect(error.message).toContain('application/pdf');
     expect(api.calls).toEqual([]);
   });
 
@@ -319,6 +352,16 @@ describe('upload_audio refuses', () => {
 
     expect(error.code).toBe('invalid_request');
     expect(error.message).toContain('36000');
+    expect(api.calls).toEqual([]);
+  });
+
+  it('a container reporting a zero duration, naming declared_duration_seconds as the remedy', async () => {
+    const { api, fail } = harness({ inspect: inspectAs({ durationSeconds: 0 }) });
+
+    const error = await fail({ path: '/tmp/zero.wav' });
+
+    expect(error.code).toBe('invalid_request');
+    expect(error.message).toContain('declared_duration_seconds');
     expect(api.calls).toEqual([]);
   });
 
