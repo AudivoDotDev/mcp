@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.0
+
+- **`transcribe`, the default tool**: one episode in, its transcript out. It makes the API's
+  single-episode submit with no quote first, waits for the job inside the call (20 seconds on the
+  hosted server, 50 by default locally, with progress notifications to clients that ask), and
+  returns the transcript a page at a time with the exact call for the next page. `max_credits` caps
+  the spend; the idempotency key is derived from the request, so the same call never charges twice.
+- **Local server: YouTube.** `transcribe` takes a YouTube link and `youtube_search` finds one. The
+  audio is downloaded on your machine with yt-dlp — yours if it is on `PATH` or named by
+  `AUDIVO_YTDLP_PATH`, otherwise the official standalone release, fetched once and checked against
+  its `SHA2-256SUMS` — uploaded as your own, and transcribed. The hosted server offers none of this.
+- **Local server: files.** `transcribe` takes an absolute `path` and uploads and transcribes it in one
+  call.
+- `read_transcript` returns pages (about 40,000 characters each) instead of a 12,000-character
+  preview, takes `page_start`, and with `job_id` can `wait_seconds` for a running job.
+- Contract 0.13.0: `upload_id` and `max_credits` on `POST /v1/transcripts`, and the four codes they
+  bring — `upload_not_found`, `upload_not_received`, `upload_mismatch`, `max_credits_exceeded`.
+- Server instructions tell every client that `transcribe` is the call to reach for.
+- Listed in the official MCP Registry as `io.github.AudivoDotDev/mcp`, with the hosted endpoint as a
+  remote. The hosted endpoint accepts OAuth: clients that support MCP authorization connect with the
+  URL alone.
+
 ## 0.2.0
 
 - Contract 0.12.0: `quote` accepts `uploads: [{ upload_id }]` as a third selection alongside `shows` and `chart`.

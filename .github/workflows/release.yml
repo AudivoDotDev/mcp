@@ -1,10 +1,17 @@
-# Publishes the package when a version tag is pushed. Uses npm trusted
-# publishing (OIDC), so no npm token is stored anywhere: the package's
-# settings on npmjs.com name this repository and this workflow file as the
-# publisher, and npm mints a short-lived credential per run.
+# Publishes the package when a version tag is pushed, then lists it in the
+# official MCP Registry. Both use GitHub's OIDC, so no token is stored
+# anywhere: npm's trusted publishing names this repository and this workflow
+# file as the publisher, and the registry grants `io.github.AudivoDotDev/*` to
+# a workflow running in AudivoDotDev's own repository.
 #
-# Release steps: bump `version` in package.json, add the CHANGELOG entry,
-# commit, then `git tag v<version> && git push --tags`.
+# Release steps: bump `version` in package.json, server.json (both version
+# fields) and SERVER_INFO in src/server.ts — `src/release.test.ts` fails
+# until all four agree — add the CHANGELOG entry, commit, then
+# `git tag v<version> && git push --tags`.
+#
+# A version already on npm (published by hand, say) is not published again;
+# the registry step still runs, so a hand publish followed by the tag lists
+# the release without failing the workflow.
 name: Release
 
 on:
@@ -30,5 +37,20 @@ jobs:
         run: |
           version=$(node -p "require('./package.json').version")
           test "v$version" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} but package.json says $version"; exit 1; }
-      # prepublishOnly runs typecheck, lint, format:check, test, and build.
-      - run: npm publish --access public --provenance
+      - name: Publish to npm, unless this version is already there
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version is already on npm; not publishing it again"
+          else
+            # prepublishOnly runs typecheck, lint, format:check, test, and build.
+            npm publish --access public --provenance
+          fi
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+      - name: List the release in the MCP Registry
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

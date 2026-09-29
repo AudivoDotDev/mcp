@@ -1,0 +1,36 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.AudivoDotDev/mcp",
+  "title": "Audivo",
+  "description": "Podcast transcripts: send an episode link and get the transcript back, a page at a time.",
+  "repository": {
+    "url": "https://github.com/AudivoDotDev/mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://docs.audivo.dev/mcp-server",
+  "version": "0.3.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@audivo/mcp",
+      "version": "0.3.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "AUDIVO_API_KEY",
+          "description": "An Audivo API key (hk_live_...) from https://dash.audivo.dev",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.audivo.dev/mcp"
+    }
+  ]
+}

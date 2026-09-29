@@ -1,7 +1,8 @@
 {
   "name": "@audivo/mcp",
-  "version": "0.2.0",
-  "description": "Official Audivo MCP server: podcast search, episode discovery, quotes, and transcripts for Claude, Codex, Cursor, and any other MCP client.",
+  "version": "0.3.0",
+  "description": "Official Audivo MCP server: one call from an episode link to its transcript. Podcast search, episode discovery, transcripts, and on the local server YouTube audio, for Claude, ChatGPT, Codex, Cursor, and any other MCP client.",
+  "mcpName": "io.github.AudivoDotDev/mcp",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -18,7 +19,10 @@
     "audivo",
     "claude",
     "codex",
-    "cursor"
+    "cursor",
+    "youtube",
+    "chatgpt",
+    "yt-dlp"
   ],
   "bin": {
     "audivo-mcp": "./dist/bin.js"
@@ -40,7 +44,8 @@
     "contract/openapi.yaml",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "server.json"
   ],
   "engines": {
     "node": ">=22"
