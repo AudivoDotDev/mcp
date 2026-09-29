@@ -205,6 +205,130 @@ export function previewOf(transcript: CanonicalTranscript, budgetChars: number):
   };
 }
 
+// --- Transcript pages ------------------------------------------------------------
+
+/**
+ * Characters of transcript one page carries: about fifty minutes of speech at
+ * a typical pace, and about ten thousand tokens — well inside what hosts
+ * accept from one tool result, and enough that an hour-long episode arrives
+ * in two pages. A model reads the whole transcript by asking for the next
+ * page, because the full artifact's authenticated URL is not something a chat
+ * model can fetch: it holds no key.
+ */
+export const TRANSCRIPT_PAGE_CHARS = 40_000;
+
+export type Page = {
+  readonly text: string;
+  /** The first segment on this page, 0-based: what `page_start` asks for. */
+  readonly page_start: number;
+  readonly segments_included: number;
+  readonly segments_total: number;
+  /** Where the next page starts, or `null` when this page reaches the end. */
+  readonly next_segment: number | null;
+  readonly chars: number;
+  /** A single segment longer than a page was cut at a word boundary, and the rest of it is not on any page. */
+  readonly segment_truncated: boolean;
+};
+
+/**
+ * Whole segments from `pageStart` on, in order, while they fit — the same
+ * boundary rule as `previewOf`, starting anywhere. A segment that alone is
+ * over the budget is cut at a word boundary and the page moves past it, so a
+ * page always advances and a caller walking `next_segment` always ends.
+ */
+export function pageOf(
+  transcript: CanonicalTranscript,
+  pageStart: number,
+  budgetChars: number,
+): Page {
+  const total = transcript.segments.length;
+  const from = Math.max(0, Math.min(Math.trunc(pageStart), total));
+  const lines: string[] = [];
+  let chars = 0;
+  let index = from;
+  for (; index < total; index += 1) {
+    const line = segmentLine(transcript.segments[index]!);
+    const cost = line.length + (lines.length === 0 ? 0 : 1);
+    if (chars + cost > budgetChars) break;
+    lines.push(line);
+    chars += cost;
+  }
+  if (lines.length === 0 && from < total) {
+    const first = segmentLine(transcript.segments[from]!).slice(0, budgetChars);
+    const space = first.lastIndexOf(' ');
+    const text = space > budgetChars / 2 ? first.slice(0, space) : first;
+    return {
+      text,
+      page_start: from,
+      segments_included: 1,
+      segments_total: total,
+      next_segment: from + 1 < total ? from + 1 : null,
+      chars: text.length,
+      segment_truncated: true,
+    };
+  }
+  return {
+    text: lines.join('\n'),
+    page_start: from,
+    segments_included: lines.length,
+    segments_total: total,
+    next_segment: index < total ? index : null,
+    chars,
+    segment_truncated: false,
+  };
+}
+
+/**
+ * One page of a transcript as a tool hands it back: the facts about the
+ * transcript and the page in the trusted half, the page's text (and, on the
+ * first page, the warnings) to fence. `continueWith` is what to call for the
+ * next page, spelled as that tool takes it; it is omitted on the last page.
+ */
+export function transcriptPage(
+  transcript: CanonicalTranscript,
+  options: {
+    readonly pageStart: number;
+    readonly budgetChars: number;
+    readonly label: string;
+    readonly continueWith: (nextSegment: number) => Record<string, unknown>;
+    readonly reference?: Reference;
+  },
+): { facts: Record<string, unknown>; rows: ProseRow[]; text: string } {
+  const page = pageOf(transcript, options.pageStart, options.budgetChars);
+  return {
+    facts: {
+      delivery: 'page',
+      language: transcript.language,
+      duration_sec: transcript.duration_sec,
+      source: transcript.source,
+      timing_precision: transcript.timing_precision,
+      warnings: transcript.warnings.length,
+      page: {
+        page_start: page.page_start,
+        segments_included: page.segments_included,
+        segments_total: page.segments_total,
+        chars: page.chars,
+        complete: page.next_segment === null,
+        ...(page.segment_truncated ? { segment_truncated: true } : {}),
+      },
+      ...(page.next_segment === null ? {} : { next_page: options.continueWith(page.next_segment) }),
+      ...(options.reference === undefined ? {} : { reference: options.reference }),
+    },
+    // Warnings once, with the first page: they are about the whole
+    // transcript, and a model paging through it has them already.
+    rows:
+      page.page_start === 0
+        ? transcript.warnings.map((warning, index) => ({
+            label: `${options.label} warning ${index + 1} (segment ${warning.segment}, ${warning.type})`,
+            fields: { detail: warning.detail },
+          }))
+        : [],
+    text: `${options.label} transcript, segments ${page.page_start} to ${
+      page.page_start + page.segments_included - 1
+    } of ${page.segments_total}\n${page.text}`,
+  };
+}
+
 // --- The reference ---------------------------------------------------------------
 
 export type Reference = {
@@ -476,7 +600,7 @@ export type TranscriptDelivery = {
   readonly untrusted: string;
 };
 
-function statusFacts(status: JobStatus): Record<string, unknown> {
+export function statusFacts(status: JobStatus): Record<string, unknown> {
   return {
     job_id: status.job_id,
     status: status.status,
@@ -542,7 +666,7 @@ function previewDelivery(
 }
 
 /** The rows and the preview, joined the way every transcript-bearing result joins them. */
-function untrustedBlock(rows: readonly ProseRow[], preview?: string): string {
+export function untrustedBlock(rows: readonly ProseRow[], preview?: string): string {
   return [proseBlock(rows), ...(preview === undefined ? [] : [preview])]
     .filter((part) => part !== '')
     .join('\n');
@@ -617,6 +741,115 @@ export function deliverCachedRead(
   const delivered = previewDelivery(transcript, reference, budgetChars, `read ${readId}`);
   trusted.transcript = delivered.facts;
   return { trusted, untrusted: untrustedBlock(delivered.rows, delivered.preview) };
+}
+
+/** A job state from which nothing more will happen. */
+export function isTerminal(status: JobStatus['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+/**
+ * A job as `read_transcript` and `transcribe` hand it back: its status and,
+ * once completed, one page of its transcript with the call that returns the
+ * next. The oversized case — the API's `transcript_url` — stays a reference:
+ * its presigned URL is dropped here as everywhere else.
+ */
+export function deliverJobPage(
+  body: TranscriptJobResponse,
+  options: {
+    readonly reference: Reference;
+    readonly pageStart: number;
+    readonly budgetChars: number;
+    readonly extra?: Record<string, unknown>;
+  },
+): TranscriptDelivery {
+  if (!('job_id' in body)) {
+    const transcript = {
+      delivery: 'by_reference',
+      reason: 'above_inline_limit',
+      reference: options.reference,
+    };
+    return { trusted: { ...options.extra, transcript }, untrusted: '' };
+  }
+  const trusted = { ...options.extra, ...statusFacts(body) };
+  const rows: ProseRow[] = [];
+  if (body.error !== undefined && body.error.message !== '') {
+    rows.push({ label: `job ${body.job_id} error`, fields: { message: body.error.message } });
+  }
+  if (body.status !== 'completed') {
+    trusted.transcript = isTerminal(body.status)
+      ? { delivery: 'none', reason: `status is ${body.status}` }
+      : {
+          delivery: 'not_yet',
+          reason: `status is ${body.status}`,
+          wait_with: {
+            tool: 'read_transcript',
+            arguments: { job_id: body.job_id, wait_seconds: 60 },
+          },
+        };
+    return { trusted, untrusted: proseBlock(rows) };
+  }
+  const transcript = body.artifact?.transcript;
+  if (transcript === undefined) {
+    const oversized = body.artifact?.transcript_url !== undefined;
+    trusted.transcript = {
+      delivery: 'by_reference',
+      reason: oversized ? 'above_inline_limit' : 'artifact_not_inline',
+      reference: options.reference,
+    };
+    return { trusted, untrusted: proseBlock(rows) };
+  }
+  const page = transcriptPage(transcript, {
+    pageStart: options.pageStart,
+    budgetChars: options.budgetChars,
+    label: `job ${body.job_id}`,
+    continueWith: (next) => ({
+      tool: 'read_transcript',
+      arguments: { job_id: body.job_id, page_start: next },
+    }),
+  });
+  trusted.transcript = page.facts;
+  return { trusted, untrusted: untrustedBlock([...rows, ...page.rows], page.text) };
+}
+
+/**
+ * A read this account already paid for, one page at a time; `read_transcript`
+ * with the same `read_id` and the next `page_start` returns the rest, and
+ * charges nothing.
+ */
+export function deliverReadPage(
+  readId: string,
+  body: TranscriptReadResponse,
+  options: {
+    readonly reference: Reference;
+    readonly pageStart: number;
+    readonly budgetChars: number;
+  },
+): TranscriptDelivery {
+  const trusted: Record<string, unknown> = {
+    read_id: readId,
+    credits_charged: 'credits_charged' in body ? body.credits_charged : 0,
+  };
+  const transcript = 'transcript' in body ? body.transcript : undefined;
+  if (transcript === undefined) {
+    trusted.transcript = {
+      delivery: 'by_reference',
+      reason: 'above_inline_limit',
+      reference: options.reference,
+    };
+    return { trusted, untrusted: '' };
+  }
+  const page = transcriptPage(transcript, {
+    pageStart: options.pageStart,
+    budgetChars: options.budgetChars,
+    label: `read ${readId}`,
+    continueWith: (next) => ({
+      tool: 'read_transcript',
+      arguments: { read_id: readId, page_start: next },
+    }),
+  });
+  trusted.transcript = page.facts;
+  return { trusted, untrusted: untrustedBlock(page.rows, page.text) };
 }
 
 // --- Groups -----------------------------------------------------------------------------

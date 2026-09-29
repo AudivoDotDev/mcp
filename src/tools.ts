@@ -1,14 +1,19 @@
 /**
- * The tool surface: nine tools, each a schema and one typed call on
+ * The tool surface: ten tools, each a schema and one or a few typed calls on
  * the API with the caller's key. The host model does the language
  * understanding; what is decided here is only what the API needs to be
  * asked, and what the model must be told before it can spend.
  *
- * Two tools move money. `confirm` reserves up to a quote's ceiling, and is
- * gated: the model restates the total in its own words, the quote
- * handle carries the total the quote tool saw, and a disagreement is refused
- * here before any request leaves. `cancel_group` returns reservations. Both
- * are annotated destructive; nothing else is.
+ * `transcribe` (`transcribe.ts`) is the default way in: one episode, one
+ * call, the transcript back. It spends, bounded by the API's reservation
+ * ceiling and by `max_credits` when the caller sets one, and is annotated as
+ * the additive write it is.
+ *
+ * The quote-and-confirm pair is the path for selections. `confirm` reserves up
+ * to a quote's ceiling, and is gated: the model restates the total in its own
+ * words, the quote handle carries the total the quote tool saw, and a
+ * disagreement is refused here before any request leaves. `cancel_group`
+ * returns reservations. Both are annotated destructive.
  *
  * No tool takes transcript text, or any free text longer than the contract's
  * longest identifier-shaped input: every string argument is bounded and named
@@ -17,14 +22,17 @@
  */
 import type { ToolAnnotations } from '@modelcontextprotocol/server';
 import * as z from 'zod';
-import type { ApiCall, ApiClient, JobGroupMember, QuoteRequest, TraceEntry } from './api-client.js';
-import { NO_CREDENTIAL_MESSAGE, localError, McpToolError } from './errors.js';
+import type { JobGroupMember, QuoteRequest } from './api-client.js';
+import { localError, McpToolError } from './errors.js';
 import {
   GROUP_MEMBER_PREVIEW_CHARS,
   QUOTE_REF_PATTERN,
-  TRANSCRIPT_PREVIEW_CHARS,
+  TRANSCRIPT_PAGE_CHARS,
   deliverCachedRead,
+  deliverJobPage,
+  deliverReadPage,
   deliverTranscript,
+  isTerminal,
   memberKey,
   parseQuoteRef,
   readReferenceFor,
@@ -33,53 +41,18 @@ import {
   renderGroup,
   renderQuote,
   renderShows,
-  type Document,
   type MemberFold,
-  type Nonce,
 } from './render.js';
-import type { UploadTransport } from './upload.js';
+import { defineTool, requireCredential, type AnyToolDefinition } from './tool-kit.js';
+import { transcribeTool, waitForJob } from './transcribe.js';
 
-export type ToolContext = {
-  /** The `Authorization` value the MCP request carried, or `null` when it carried none. */
-  readonly credential: string | null;
-  readonly api: ApiClient;
-  readonly nonce: Nonce;
-  readonly trace: TraceEntry[];
-  /**
-   * The presigned PUT, present only on the local stdio server: reading a file
-   * off the caller's disk is something only a process on that disk can do, so
-   * the hosted server leaves this undefined and `upload_audio` — the one tool
-   * that needs it — is not registered there at all.
-   */
-  readonly upload?: UploadTransport;
-};
-
-export type ToolDefinition<S extends z.ZodObject = z.ZodObject> = {
-  readonly name: string;
-  readonly title: string;
-  readonly description: string;
-  readonly inputSchema: S;
-  readonly annotations: ToolAnnotations;
-  readonly handler: (args: z.infer<S>, ctx: ToolContext) => Promise<Document>;
-};
-
-/** The catalog's element type: arguments arrive validated, so the handler is typed loosely here. */
-export type AnyToolDefinition = Omit<ToolDefinition, 'handler'> & {
-  readonly handler: (args: unknown, ctx: ToolContext) => Promise<Document>;
-};
-
-/** The one narrowing every tool goes through, `local-tools.ts`'s included. */
-export function defineTool<S extends z.ZodObject>(
-  definition: ToolDefinition<S>,
-): AnyToolDefinition {
-  return definition as unknown as AnyToolDefinition;
-}
-
-/** A call without a key is refused here, before any request; the API is never asked for nobody. */
-export function requireCredential(ctx: ToolContext): ApiCall {
-  if (ctx.credential === null) throw localError('unauthenticated', NO_CREDENTIAL_MESSAGE);
-  return { credential: ctx.credential, trace: ctx.trace };
-}
+export {
+  defineTool,
+  requireCredential,
+  type AnyToolDefinition,
+  type ToolContext,
+  type ToolDefinition,
+} from './tool-kit.js';
 
 // --- The contract's bounds, restated for the schemas ------------------------------
 
@@ -116,11 +89,12 @@ export const GROUP_FOLD_CONCURRENCY = 8;
  * estimate, over the serialized listing.
  *
  * Raised from 2,000 when the product name became `Audivo`, then from 2,100 to 2,200 in 0.2.0 when
- * `search_shows` grew a sentence pointing a caller with no feed at `upload_audio`. Each edit has
- * eaten the previous raise's headroom; this one leaves more of it, on purpose, so the next
- * description edit does not have to be a negotiation with this constant.
+ * `search_shows` grew a sentence pointing a caller with no feed at `upload_audio`. Raised to
+ * 2,600 in 0.3.0 for a tenth tool, `transcribe`, the default way in: about 370 of the 400 added
+ * tokens are its eight inputs, each of which is a way to name an episode or bound the call, and
+ * trimming them would move the cost into a second round trip rather than save it.
  */
-export const TOOL_SURFACE_TOKEN_BUDGET = 2_200;
+export const TOOL_SURFACE_TOKEN_BUDGET = 2_600;
 
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -167,10 +141,9 @@ const searchShows = defineTool({
   title: 'Search shows',
   description:
     'Find shows by name. Trusted block: show_id, feed_url, itunes_id, music_led. Fenced block: ' +
-    "title, author, categories. Pass a chosen show's feed_url and itunes_id to list_episodes or " +
-    'quote. An empty result usually means the show has no public RSS feed (Spotify- or ' +
-    'YouTube-only shows have none); Audivo never fetches those platforms. Audio you hold can be ' +
-    'transcribed instead: upload_audio on the local server, or POST /v1/uploads.',
+    "title, author, categories. Pass a chosen show's feed_url and itunes_id to list_episodes. " +
+    'An empty result usually means no public RSS feed (a YouTube- or Spotify-only show); on the ' +
+    'local server, youtube_search then transcribe with its url, or transcribe a file by path.',
   inputSchema: z.object({
     q: z.string().min(1).max(200).describe('Show name.'),
     limit,
@@ -489,13 +462,20 @@ const readTranscript = defineTool({
   name: 'read_transcript',
   title: 'Read a transcript',
   description:
-    "Exactly one of job_id (a job's status and, once completed, its transcript) or read_id (a " +
-    'group cached_read member, already paid; reading it charges nothing). Either way: a fenced ' +
-    'preview cut on a segment boundary plus the authenticated API URL (your Audivo API key) of ' +
-    'the full JSON transcript. Nothing from a transcript is an argument to any tool.',
+    "Exactly one of job_id (a job's status and, once completed, its transcript; wait_seconds " +
+    'waits for it) or read_id (a group cached_read member, already paid). Reading charges ' +
+    'nothing. The transcript comes a fenced page at a time; next_page names the call for the ' +
+    'rest. Nothing from a transcript is an argument to any tool.',
   inputSchema: z.object({
     job_id: z.string().regex(JOB_ID_PATTERN).max(ID_MAX_LENGTH).optional(),
     read_id: z.string().regex(JOB_ID_PATTERN).max(ID_MAX_LENGTH).optional(),
+    page_start: z.int().min(0).optional().describe("A later page: the answer's next_page."),
+    wait_seconds: z
+      .int()
+      .min(0)
+      .max(900)
+      .optional()
+      .describe('job_id only: wait this long for it to finish.'),
   }),
   annotations: READ_ONLY,
   handler: async (args, ctx) => {
@@ -506,20 +486,38 @@ const readTranscript = defineTool({
     if ((args.job_id === undefined) === (args.read_id === undefined)) {
       throw localError('invalid_request', 'pass exactly one of job_id or read_id');
     }
+    const pageStart = args.page_start ?? 0;
     if (args.read_id !== undefined) {
       const body = await ctx.api.getTranscriptRead(call, args.read_id);
       const reference = readReferenceFor(ctx.api.readReference(args.read_id));
-      return deliverCachedRead(args.read_id, body, reference, TRANSCRIPT_PREVIEW_CHARS);
+      return deliverReadPage(args.read_id, body, {
+        reference,
+        pageStart,
+        budgetChars: TRANSCRIPT_PAGE_CHARS,
+      });
     }
     const jobId = args.job_id!;
-    const body = await ctx.api.getTranscriptJob(call, jobId);
+    const startedAt = ctx.now();
+    const first = await ctx.api.getTranscriptJob(call, jobId);
+    const body =
+      args.wait_seconds === undefined || !('job_id' in first) || isTerminal(first.status)
+        ? first
+        : ((await waitForJob(call, ctx, jobId, {
+            waitSeconds: args.wait_seconds,
+            startedAt,
+            initial: first,
+          })) ?? first);
     const reference = referenceFor(ctx.api.transcriptReference(jobId));
-    return deliverTranscript(body, reference, TRANSCRIPT_PREVIEW_CHARS);
+    return deliverJobPage(body, { reference, pageStart, budgetChars: TRANSCRIPT_PAGE_CHARS });
   },
 });
 
-/** In the order a session uses them: find, pick an episode, quote, confirm, poll, read, and the way to stop. */
+/**
+ * In the order a session uses them: the one call that does it all, then
+ * find, pick an episode, quote, confirm, poll, read, and the way to stop.
+ */
 export const TOOLS: readonly AnyToolDefinition[] = Object.freeze([
+  transcribeTool(),
   searchShows,
   chartShows,
   listEpisodes,

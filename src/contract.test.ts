@@ -48,6 +48,7 @@ import {
   transcriptRead,
   type RecordedCall,
 } from './testing/fake-api.js';
+import { waitContext } from './testing/clock.js';
 
 type AjvValidateFunction = ((data: unknown) => boolean) & { errors?: unknown };
 interface AjvInstance {
@@ -171,6 +172,7 @@ describe('what each tool sends', () => {
       api: createApiClient({ baseUrl: BASE_URL, fetch: api.fetch }),
       nonce: nonces('0123456789abcdef'),
       trace: [],
+      ...waitContext(),
       upload: fakeUploadTransport(),
     };
     const calls: [string, unknown][] = [
@@ -202,6 +204,11 @@ describe('what each tool sends', () => {
       ['group_status', { group_id: GROUP_ID }],
       ['cancel_group', { group_id: GROUP_ID }],
       ['read_transcript', { job_id: JOB_ID }],
+      // One episode, one call: the submit, then a look at the job it made.
+      [
+        'transcribe',
+        { url: 'https://podcasts.apple.com/us/podcast/x/id123?i=456', max_credits: 200 },
+      ],
       // The same tool's other id: a settled cache read, on its own operation.
       ['read_transcript', { read_id: READ_ID }],
       // A real WAV off disk: the announcement carries the file's own hash,

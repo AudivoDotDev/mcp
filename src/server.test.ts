@@ -134,7 +134,7 @@ function trustedOf(result: CallToolResult): Record<string, unknown> {
 }
 
 describe('the listing', () => {
-  it.each(ERAS)('serves all nine tools with their annotations (%s)', async (era) => {
+  it.each(ERAS)('serves all ten tools with their annotations (%s)', async (era) => {
     const { handler } = wired();
     const tools = await listTools(handler, era);
     expect(tools.map((tool) => tool.name)).toEqual([...TOOL_NAMES]);
@@ -150,16 +150,32 @@ describe('the listing', () => {
     }
     expect(annotations('read_transcript')).toMatchObject({ readOnlyHint: true });
     expect(annotations('quote')).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    // It spends, so it is not read-only; it creates and charges and never
+    // deletes or overwrites, so it is not destructive; the same call returns
+    // the same job, so it is idempotent.
+    expect(annotations('transcribe')).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    });
     for (const tool of tools) expect((tool.inputSchema as { type: string }).type).toBe('object');
   });
 
-  it('leaves upload_audio to the local server: nine tools, none of them local-only', async () => {
+  it('leaves the local tools to the local server: ten tools, none of them local-only', async () => {
     const { handler } = wired();
     const tools = await listTools(handler);
-    // The tool reads a file off the caller's disk; this process has never
-    // seen it, so the hosted surface does not offer it at all.
-    expect(tools).toHaveLength(9);
+    // `upload_audio` reads a file off the caller's disk and `youtube_search`
+    // runs yt-dlp on it; this process has seen neither, and nothing Audivo
+    // hosts fetches from YouTube, so the hosted surface offers neither.
+    expect(tools).toHaveLength(10);
     expect(tools.map((tool) => tool.name)).not.toContain('upload_audio');
+    expect(tools.map((tool) => tool.name)).not.toContain('youtube_search');
+    // And its `transcribe` takes no file path.
+    const transcribe = tools.find((tool) => tool.name === 'transcribe')!;
+    expect(
+      Object.keys((transcribe.inputSchema as { properties: object }).properties),
+    ).not.toContain('path');
   });
 
   it('stays within the token budget', async () => {
@@ -366,6 +382,13 @@ describe('what leaves the server', () => {
         args: { show_id: SHOW_ID, feed_url: FEED_URL },
       },
       { options: {}, tool: 'confirm', args: confirmArgs },
+      {
+        options: {
+          created: { status: 402, body: `no credit for ${CREDENTIAL}` },
+        },
+        tool: 'transcribe',
+        args: { url: 'https://podcasts.apple.com/us/podcast/x/id123?i=456' },
+      },
       { options: { throws: leaky }, tool: 'search_shows', args: { q: 'x' } },
       {
         options: { answers: { getChart: { status: 500, body: `<html>${CREDENTIAL}</html>` } } },
@@ -456,6 +479,6 @@ describe('what leaves the server', () => {
   });
 
   it('names itself', () => {
-    expect(SERVER_INFO).toEqual({ name: 'audivo', version: '0.2.0' });
+    expect(SERVER_INFO).toEqual({ name: 'audivo', version: '0.3.0' });
   });
 });

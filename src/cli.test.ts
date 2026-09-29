@@ -80,7 +80,7 @@ describe('serve', () => {
     close = undefined;
   });
 
-  it('serves the nine hosted tools and upload_audio, with the configured key on every call', async () => {
+  it('serves the ten hosted tools and the two local ones, with the configured key on every call', async () => {
     const api = fakeApi();
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     const handle = serve(
@@ -107,8 +107,11 @@ describe('serve', () => {
         'quote',
         'read_transcript',
         'search_shows',
-        // Only here: the hosted server has no disk to read a file from.
+        'transcribe',
+        // Only here: the hosted server has no disk to read a file from, and
+        // nothing Audivo hosts runs yt-dlp.
         'upload_audio',
+        'youtube_search',
       ].sort(),
     );
 

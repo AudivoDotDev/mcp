@@ -1,13 +1,15 @@
 openapi: 3.1.0
 info:
   title: Audivo API
-  version: '0.12.0'
+  version: '0.13.0'
   description: >-
     The Audivo API turns a public podcast episode into a clean, timed
     transcript. Name an episode by an Apple Podcasts link, by its RSS feed
-    URL and GUID, or by the episode id an earlier answer gave you; get back
-    structured, timed text — at once for an episode already transcribed, or
-    as a job you poll for fresh audio.
+    URL and GUID, by the episode id an earlier answer gave you, or by an
+    upload of audio you hold; get back structured, timed text — at once for
+    an episode already transcribed, or as a job you poll for fresh audio.
+    One call does it: `POST /v1/transcripts`. Quotes are for pricing a
+    selection of many episodes before confirming it.
 
 
     Two authentication schemes, and which an operation takes is part of what
@@ -21,7 +23,7 @@ info:
     Deferred on purpose, and absent from this document rather than hidden:
     webhooks, subscriptions, speaker labels beyond the frozen
     `diarized: false` shape, custom vocabulary, caller-selected engines,
-    raw-audio URLs and uploads, SDKs, translation, and cross-corpus search.
+    raw-audio URLs, SDKs, translation, and cross-corpus search.
     What changed in each version is on the documentation site's changelog.
   # Maintainers: the version history and design rationale that used to be
   # this description live in the repository's docs (ADRs, plans) and on the
@@ -85,12 +87,22 @@ paths:
       security:
         - apiKeyBearer: []
       description: >-
-        Accepts exactly one of three input shapes (`url`, `feed_url` +
-        `guid`, or `episode_id`); supplying more than one, or fields from more
-        than one shape, fails schema validation. Returns
+        The default way to transcribe one episode: one call, no quote first.
+        Accepts exactly one of four input shapes (`url`, `feed_url` +
+        `guid`, `episode_id`, or `upload_id`); supplying more than one, or
+        fields from more than one shape, fails schema validation. Returns
         a synchronous result on a cache hit or publisher-transcript
         passthrough, or `202` with a job to poll on a miss. `dry_run: true` returns a quote and creates
         neither a job nor a reservation.
+
+
+        **Spend cap.** `max_credits` is the most this call may take. It is
+        compared with the job's reservation ceiling (the estimate plus 25%,
+        the most a job can settle at) or, for a cached episode, with the
+        cached-read price for this caller, before anything is reserved; a
+        call that could take more is refused `422 max_credits_exceeded` with
+        the figure in the message. The cap never lowers the reservation.
+        A dry run with `max_credits` refuses exactly when the call would.
 
 
         **Every job belongs to a group.**
@@ -105,6 +117,15 @@ paths:
         member not yet landed — is `409 request_in_progress`: retry with
         the same key shortly, never a new one, which would start a second
         job for the same episode.
+
+
+        **Uploads.** `upload_id` names a file the caller announced with
+        `POST /v1/uploads` and PUT. It is verified exactly as a quote
+        verifies one — this account's and unexpired, arrived, and matching
+        the announced size and SHA-256 — and refused with its own code when
+        it is not: `404 upload_not_found`, `409 upload_not_received`
+        (retryable once the PUT lands), or `422 upload_mismatch`. It is
+        priced from the declared duration.
 
 
         **Upload episodes.** `episode_id` may name an episode created from
@@ -166,6 +187,15 @@ paths:
                 value:
                   episode_id: ep_6cvvz2gskmrjfsze
                   format: vtt
+              byUploadId:
+                summary: An upload of the caller's own audio
+                value:
+                  upload_id: upl_x7Kq2mN9pR4sT6vW8yZ0aB1c
+              withSpendCap:
+                summary: Apple Podcasts episode URL, refused if it could take more than 40 credits
+                value:
+                  url: 'https://podcasts.apple.com/us/podcast/x/id123?i=456'
+                  max_credits: 40
       responses:
         '200':
           description: >-
@@ -672,12 +702,15 @@ paths:
         read. Nothing shrinks silently.
 
 
-        **Two request shapes.** `chart` asks the provider for a category
+        **Three request shapes.** `chart` asks the provider for a category
         chart (clamped exactly as `GET /v1/charts` clamps it) and, because
         nobody chose those shows, excludes music-led ones unless
         `include_music_led` is `true`. `shows` names feed URLs — usually
         straight from a search result — and takes every one as chosen; no
-        category data is consulted for a named show.
+        category data is consulted for a named show. `uploads` names files
+        the caller announced and sent with `POST /v1/uploads`; each is
+        verified with one object head and priced from its declared
+        duration.
 
 
         **One feed fetch per show.** The feeds read to select episodes are
@@ -750,7 +783,9 @@ paths:
         presigned PUT for it. The URL is signed against the declared SHA-256,
         so S3 refuses a body whose hash differs; the API never reads the
         bytes. Send the file with exactly the `put_headers` returned. Then
-        name it in a quote as `uploads: [{ upload_id }]`.
+        transcribe it with `POST /v1/transcripts` and `{ "upload_id": … }`,
+        or name it in a quote as `uploads: [{ upload_id }]` alongside
+        others.
 
         The upload is private to the account: its transcript is cached for
         this account alone. The upload becomes unavailable at
@@ -2891,19 +2926,27 @@ components:
         - account_not_found
         - tier_unchanged
         - upload_quota_exceeded
+        - upload_not_found
+        - upload_not_received
+        - upload_mismatch
+        - max_credits_exceeded
       description: >-
         Every code the API returns, and the HTTP status it comes with.
         `invalid_request`, `invalid_url` → 400. `unauthenticated` → 401.
         `payment_required` → 402. `job_not_found`, `quote_not_found`,
-        `group_not_found`, `api_key_not_found`, `credit_lot_not_found` → 404.
+        `group_not_found`, `api_key_not_found`, `credit_lot_not_found`,
+        `upload_not_found` → 404.
         `idempotency_conflict`, `request_in_progress`, `job_not_completed`,
         `quote_expired`, `quote_mismatch`, `quote_unverified`,
         `expected_total_mismatch`, `account_suspended`, `account_closed`,
-        `account_not_found`, `api_key_limit_reached`, `tier_unchanged` → 409.
+        `account_not_found`, `api_key_limit_reached`, `tier_unchanged`,
+        `upload_not_received` → 409; `upload_not_received` is retryable once
+        the file's PUT has landed.
         `source_not_supported`, `feed_dead`, `episode_not_found`,
         `show_not_found`, `unsafe_source`, `unsupported_codec`,
         `unsupported_language`, `duration_exceeded`, `size_exceeded`,
-        `nothing_to_quote`, `credits_not_refundable` → 422. `content_blocked` →
+        `nothing_to_quote`, `credits_not_refundable`, `upload_mismatch`,
+        `max_credits_exceeded` → 422. `content_blocked` →
         451. `rate_limited`, `concurrency_limited`, `upload_quota_exceeded` →
         429; `upload_quota_exceeded` is retryable, at the earliest capacity
         return time its message names. `internal_error`,
@@ -2968,6 +3011,8 @@ components:
                   unsupported_codec,
                   unsupported_language,
                   credits_not_refundable,
+                  upload_mismatch,
+                  max_credits_exceeded,
                 ]
             type: { const: unprocessable_input }
         - required: [code, type]
@@ -2991,6 +3036,7 @@ components:
                   account_not_found,
                   api_key_limit_reached,
                   tier_unchanged,
+                  upload_not_received,
                 ]
             type: { const: conflict }
         - required: [code, type]
@@ -3006,6 +3052,7 @@ components:
                   group_not_found,
                   api_key_not_found,
                   credit_lot_not_found,
+                  upload_not_found,
                 ]
             type: { const: not_found }
         - required: [code, type]
@@ -3498,6 +3545,12 @@ components:
         dry_run:
           type: boolean
           default: false
+        max_credits:
+          $ref: '#/components/schemas/CreditAmount'
+          description: >-
+            The most this call may take; refused `422 max_credits_exceeded`
+            before anything is reserved when it could take more. Omit for no
+            cap beyond the balance.
     TranscriptCreateByFeedGuid:
       type: object
       additionalProperties: false
@@ -3514,6 +3567,12 @@ components:
         dry_run:
           type: boolean
           default: false
+        max_credits:
+          $ref: '#/components/schemas/CreditAmount'
+          description: >-
+            The most this call may take; refused `422 max_credits_exceeded`
+            before anything is reserved when it could take more. Omit for no
+            cap beyond the balance.
     TranscriptCreateByEpisodeId:
       type: object
       additionalProperties: false
@@ -3528,17 +3587,44 @@ components:
         dry_run:
           type: boolean
           default: false
+        max_credits:
+          $ref: '#/components/schemas/CreditAmount'
+          description: >-
+            The most this call may take; refused `422 max_credits_exceeded`
+            before anything is reserved when it could take more. Omit for no
+            cap beyond the balance.
+    TranscriptCreateByUpload:
+      type: object
+      additionalProperties: false
+      required: [upload_id]
+      properties:
+        upload_id:
+          $ref: '#/components/schemas/UploadId'
+        language:
+          $ref: '#/components/schemas/NullableLanguage'
+        format:
+          $ref: '#/components/schemas/TranscriptFormat'
+        dry_run:
+          type: boolean
+          default: false
+        max_credits:
+          $ref: '#/components/schemas/CreditAmount'
+          description: >-
+            The most this call may take; refused `422 max_credits_exceeded`
+            before anything is reserved when it could take more. Omit for no
+            cap beyond the balance.
     TranscriptCreateRequest:
       description: >-
-        Exactly one of `url`, `feed_url`+`guid`, or `episode_id`. `format`
-        is delivery-only and never affects the cache key or the produced
-        transcript. Raw-audio URLs, uploads,
+        Exactly one of `url`, `feed_url`+`guid`, `episode_id`, or
+        `upload_id`. `format` is delivery-only and never affects the cache
+        key or the produced transcript. Raw-audio URLs,
         engine selection, diarization, vocabulary, and callback URLs are
         rejected rather than ignored.
       oneOf:
         - $ref: '#/components/schemas/TranscriptCreateByUrl'
         - $ref: '#/components/schemas/TranscriptCreateByFeedGuid'
         - $ref: '#/components/schemas/TranscriptCreateByEpisodeId'
+        - $ref: '#/components/schemas/TranscriptCreateByUpload'
     # ---------------------------------------------------------------------
     # Job state and status (docs/product/mvp-contract.md §5), matching
     # packages/domain/src/job-state.ts's JOB_STATES exactly.
@@ -3913,8 +3999,9 @@ components:
           maximum: 36000
           description: >-
             What the quote is priced from. A job whose audio runs past the
-            ceiling this reserves fails as `declared_duration_exceeded` and
-            releases the reservation.
+            ceiling this reserves fails as `processing_failed`, with a
+            message naming the declared-duration ceiling, and releases the
+            reservation.
         title:
           type: string
           minLength: 1
@@ -5486,7 +5573,7 @@ components:
         error:
           type: unavailable
           code: processing_failed
-          message: The ASR provider failed after 3 retries; the reservation was fully released.
+          message: The worker exited unexpectedly while processing this job. The reservation was released.
           doc_url: https://docs.audivo.dev/errors#processing_failed
           request_id: req_8f3a9c2b1d4e
           retryable: true

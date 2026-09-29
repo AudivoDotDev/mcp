@@ -1,11 +1,14 @@
 /**
  * The local server: `npx -y @audivo/mcp`, spoken to over stdio by a client
- * that spawns it (Claude Code, Codex, Cursor, and the rest). Ten tools: the
- * same nine as the hosted server at `https://api.audivo.dev/mcp`, built by
- * the same factory, plus the one tool only a process on the caller's own
- * machine can offer: `upload_audio` reads a file off that disk, so
- * `LOCAL_TOOLS` is registered here and nowhere else. What else differs is
- * where the credential comes from and how long a server instance lives.
+ * that spawns it (Claude Code, Codex, Cursor, and the rest). Twelve tools:
+ * the same ten as the hosted server at `https://api.audivo.dev/mcp`, built by
+ * the same factory, with `transcribe` widened to a file path and a YouTube
+ * link, plus the two only a process on the caller's own machine can offer:
+ * `upload_audio` reads a file off that disk and `youtube_search` runs yt-dlp
+ * on it. What else differs is where the credential comes from, how long a
+ * server instance lives, and how long a tool may wait on a job — here there
+ * is no gateway ceiling, so `transcribe` waits longer and reports progress to
+ * a client that asks for it.
  *
  * The hosted server builds a fresh `McpServer` per request so a warm
  * container never holds a credential. A local process is one user with one
@@ -21,9 +24,9 @@ import { serveStdio, type StdioServerHandle } from '@modelcontextprotocol/server
 import { createApiClient, type ApiFetch } from './api-client.js';
 import { BaseUrlError, assertApiBaseUrl } from './base-url.js';
 import { errorName } from './errors.js';
-import { LOCAL_TOOLS } from './local-tools.js';
+import { servedTools } from './local-tools.js';
 import { createMcpServer, type McpDeps } from './server.js';
-import { TOOLS } from './tools.js';
+import { LOCAL_WAIT } from './transcribe.js';
 import { undiciTransport } from './transport.js';
 import { undiciUploadTransport } from './upload.js';
 
@@ -105,11 +108,15 @@ export function stdioDeps(
     // What makes `upload_audio` answerable here: the presigned PUT, over the
     // same pinned undici the API calls go out on.
     upload: undiciUploadTransport,
+    // No gateway in front of this process: a tool waits as long as the
+    // client lets it, and says how it is going where the client asked.
+    wait: LOCAL_WAIT,
+    progress: true,
   };
 }
 
-/** Every tool this server registers: the hosted catalog, and the local-only one. */
-export const SERVED_TOOLS = Object.freeze([...TOOLS, ...LOCAL_TOOLS]);
+/** Every tool this server registers: the hosted catalog, widened, and the local-only ones. */
+export const SERVED_TOOLS = servedTools();
 
 /** Starts serving and returns the handle; the transport keeps the process alive until it closes. */
 export function serve(config: CliConfig, options: StdioOptions = {}): StdioServerHandle {

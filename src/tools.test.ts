@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { createApiClient, IDEMPOTENCY_KEY_HEADER } from './api-client.js';
 import { McpToolError } from './errors.js';
-import { GROUP_MEMBER_PREVIEW_CHARS, TRANSCRIPT_PREVIEW_CHARS } from './render.js';
+import { GROUP_MEMBER_PREVIEW_CHARS, TRANSCRIPT_PAGE_CHARS } from './render.js';
 import { GROUP_FOLD_CONCURRENCY, TOOLS, mapWithConcurrency, type ToolContext } from './tools.js';
 import {
   BASE_URL,
@@ -37,6 +37,7 @@ import {
   transcriptRead,
   type FakeApiOptions,
 } from './testing/fake-api.js';
+import { waitContext } from './testing/clock.js';
 
 const NONCE = '0123456789abcdef';
 const IDEMPOTENCY_KEY = 'confirm-2026-09-08-0001';
@@ -45,7 +46,13 @@ const EXPIRES = '2026-09-09T09:00:00.000Z';
 function harness(options: FakeApiOptions = {}, credential: string | null = CREDENTIAL) {
   const api = fakeApi(options);
   const client = createApiClient({ baseUrl: BASE_URL, fetch: api.fetch });
-  const ctx: ToolContext = { credential, api: client, nonce: nonces(NONCE), trace: [] };
+  const ctx: ToolContext = {
+    credential,
+    api: client,
+    nonce: nonces(NONCE),
+    trace: [],
+    ...waitContext(),
+  };
   const run = async (name: string, args: unknown) => {
     const tool = TOOLS.find((candidate) => candidate.name === name);
     if (tool === undefined) throw new Error(`no tool ${name}`);
@@ -91,6 +98,7 @@ const MINIMAL_ARGS: Readonly<Record<string, unknown>> = {
   list_groups: {},
   cancel_group: { group_id: GROUP_ID },
   read_transcript: { job_id: JOB_ID },
+  transcribe: { url: 'https://podcasts.apple.com/us/podcast/x/id123?i=456' },
 };
 
 describe('every tool', () => {
@@ -553,7 +561,7 @@ describe('list_groups and cancel_group', () => {
 });
 
 describe('read_transcript', () => {
-  it('reads GET /v1/transcripts/{job_id}?format=json and previews to the budget', async () => {
+  it('reads GET /v1/transcripts/{job_id}?format=json and delivers the transcript as a page', async () => {
     const { api, run } = harness({ transcripts: { [JOB_ID]: jobStatus() } });
     const doc = await run('read_transcript', { job_id: JOB_ID });
     const [call] = api.callsTo('getTranscriptJob');
@@ -561,29 +569,83 @@ describe('read_transcript', () => {
     expect(Object.fromEntries(call!.query)).toEqual({ format: 'json' });
     expect(doc.trusted).toMatchObject({
       job_id: JOB_ID,
-      transcript: { delivery: 'preview', preview: { complete: true, segments_included: 3 } },
+      transcript: {
+        delivery: 'page',
+        page: { page_start: 0, complete: true, segments_included: 3, segments_total: 3 },
+      },
     });
+    // The last page names no next one.
+    expect((doc.trusted.transcript as Record<string, unknown>).next_page).toBeUndefined();
     expect(doc.untrusted).toContain('[0:00:05] Today we are talking about credits.');
   });
 
-  it('returns a bounded preview and a key-requiring reference when over budget', async () => {
+  it('pages a long transcript, and the pages together are the whole of it', async () => {
+    const long = longTranscript(2000, (i) => `Sentence ${i} of a three-hour episode, with words.`);
+    const { run } = harness({
+      transcripts: { [JOB_ID]: jobStatus({ artifact: { format: 'json', transcript: long } }) },
+    });
+    const seen: number[] = [];
+    let args: Record<string, unknown> = { job_id: JOB_ID };
+    for (let pages = 0; pages < 20; pages += 1) {
+      const doc = await run('read_transcript', args);
+      type View = {
+        page: { page_start: number; segments_included: number; chars: number };
+        next_page?: { tool: string; arguments: Record<string, unknown> };
+      };
+      const view = doc.trusted.transcript as View;
+      expect(view.page.chars).toBeLessThanOrEqual(TRANSCRIPT_PAGE_CHARS);
+      for (let i = 0; i < view.page.segments_included; i += 1) seen.push(view.page.page_start + i);
+      if (view.next_page === undefined) break;
+      // The model is told exactly what to call next, and it is this tool.
+      expect(view.next_page.tool).toBe('read_transcript');
+      expect(view.next_page.arguments).toMatchObject({ job_id: JOB_ID });
+      args = view.next_page.arguments;
+    }
+    expect(seen).toEqual(Array.from({ length: 2000 }, (_unused, i) => i));
+  });
+
+  it('carries no key and no presigned URL on any page', async () => {
     const long = longTranscript(1000, (i) => `Sentence ${i} of an hour-long episode, with words.`);
     const { run } = harness({
       transcripts: { [JOB_ID]: jobStatus({ artifact: { format: 'json', transcript: long } }) },
     });
-    const doc = await run('read_transcript', { job_id: JOB_ID });
-    type View = { preview: { chars: number; complete: boolean; cut: string }; reference: unknown };
-    const view = doc.trusted.transcript as View;
-    expect(view.preview).toMatchObject({ complete: false, cut: 'segment_boundary' });
-    expect(view.preview.chars).toBeLessThanOrEqual(TRANSCRIPT_PREVIEW_CHARS);
-    expect(view.reference).toEqual({
-      url: `${BASE_URL}/v1/transcripts/${JOB_ID}?format=json`,
-      method: 'GET',
-      authorization: 'Bearer <your Audivo API key>',
-      returns: expect.stringContaining('metered to your account'),
-    });
+    const doc = await run('read_transcript', { job_id: JOB_ID, page_start: 10 });
+    expect(doc.trusted.transcript).toMatchObject({ page: { page_start: 10 } });
     expect(JSON.stringify(doc)).not.toContain(TOKEN);
     expect(JSON.stringify(doc)).not.toContain('X-Amz');
+  });
+
+  it('waits for a running job when asked, and delivers it once it completes', async () => {
+    const running = jobStatus({
+      status: 'transcribing',
+      artifact: undefined,
+      settled_credits: undefined,
+      released_credits: undefined,
+    });
+    const { api, run } = harness({ transcripts: { [JOB_ID]: [running, running, jobStatus()] } });
+    const doc = await run('read_transcript', { job_id: JOB_ID, wait_seconds: 20 });
+    expect(doc.trusted).toMatchObject({ status: 'completed', transcript: { delivery: 'page' } });
+    expect(api.callsTo('getTranscriptJob')).toHaveLength(3);
+  });
+
+  it('stops waiting at the hosted ceiling and says how to go on waiting', async () => {
+    const running = jobStatus({
+      status: 'queued',
+      artifact: undefined,
+      settled_credits: undefined,
+      released_credits: undefined,
+    });
+    const { api, run } = harness({ transcripts: { [JOB_ID]: running } });
+    const doc = await run('read_transcript', { job_id: JOB_ID, wait_seconds: 600 });
+    expect(doc.trusted).toMatchObject({
+      status: 'queued',
+      transcript: {
+        delivery: 'not_yet',
+        wait_with: { tool: 'read_transcript', arguments: { job_id: JOB_ID } },
+      },
+    });
+    // 600 asked, the hosted policy's 20 granted: a first look and six more.
+    expect(api.callsTo('getTranscriptJob').length).toBeLessThanOrEqual(8);
   });
 
   it("never hands the model the API's presigned URL for an oversized transcript", async () => {
@@ -646,13 +708,8 @@ describe('read_transcript', () => {
       read_id: READ_ID,
       credits_charged: 0,
       transcript: {
-        delivery: 'preview',
-        preview: { complete: true, segments_included: 3 },
-        reference: {
-          url: `${BASE_URL}/v1/reads/${READ_ID}?format=json`,
-          authorization: 'Bearer <your Audivo API key>',
-          returns: expect.stringContaining('charged nothing further'),
-        },
+        delivery: 'page',
+        page: { page_start: 0, complete: true, segments_included: 3 },
       },
     });
     expect(doc.untrusted).toContain('[0:00:05] Today we are talking about credits.');

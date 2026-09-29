@@ -321,6 +321,25 @@ export function jobStatus(overrides: Partial<Schemas['JobStatus']> = {}): Schema
   };
 }
 
+/** `POST /v1/transcripts` on a miss: the job the call reserved, to poll. */
+export function jobAccepted(
+  overrides: Partial<Schemas['TranscriptJobAccepted']> = {},
+): Schemas['TranscriptJobAccepted'] {
+  return {
+    job_id: JOB_ID,
+    group_id: GROUP_ID,
+    status: 'queued',
+    episode_id: EPISODE_ID,
+    estimated_credits: 120,
+    quote_ceiling_credits: 150,
+    quote_basis: 'feed_metadata',
+    reserved_credits: 150,
+    is_cached: false,
+    estimated_seconds: 90,
+    ...overrides,
+  };
+}
+
 /** `GET /v1/reads/{read_id}` on a settled read: the transcript, and no charge. */
 export function transcriptRead(
   overrides: Partial<Schemas['TranscriptRead']> = {},
@@ -374,10 +393,22 @@ export type FakeApiOptions = {
   readonly upload?: Schemas['UploadCreated'];
   readonly group?: Schemas['JobGroupResponse'];
   readonly groups?: Schemas['JobGroupsListResponse'];
-  /** By job id; a job not named here is `404 job_not_found`. */
+  /**
+   * By job id; a job not named here is `404 job_not_found`. An array is a
+   * job seen over time: each poll answers the next entry, and the last
+   * repeats, which is how a suite drives a job from `queued` to `completed`.
+   */
   readonly transcripts?: Readonly<
-    Record<string, Schemas['JobStatus'] | Schemas['TranscriptUrlRef'] | FakeResponse>
+    Record<
+      string,
+      | Schemas['JobStatus']
+      | Schemas['TranscriptUrlRef']
+      | FakeResponse
+      | readonly (Schemas['JobStatus'] | FakeResponse)[]
+    >
   >;
+  /** What `POST /v1/transcripts` answers; a `202` with `jobAccepted()` unless a suite says otherwise. */
+  readonly created?: FakeResponse;
   /** By read id, for `GET /v1/reads/{read_id}`; an unnamed read is the same 404. */
   readonly reads?: Readonly<
     Record<string, Schemas['TranscriptRead'] | Schemas['TranscriptUrlRef'] | FakeResponse>
@@ -407,6 +438,7 @@ type Route = {
 const ROUTES: readonly Route[] = [
   { method: 'GET', pattern: /^\/v1\/search\/shows$/, operation: 'searchShows' },
   { method: 'GET', pattern: /^\/v1\/charts$/, operation: 'getChart' },
+  { method: 'POST', pattern: /^\/v1\/transcripts$/, operation: 'createTranscript' },
   { method: 'GET', pattern: /^\/v1\/shows\/([^/]+)\/episodes$/, operation: 'listShowEpisodes' },
   { method: 'POST', pattern: /^\/v1\/quotes$/, operation: 'createQuote' },
   { method: 'POST', pattern: /^\/v1\/uploads$/, operation: 'createUpload' },
@@ -471,6 +503,7 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
   const calls: RecordedCall[] = [];
   let inFlight = 0;
   let peak = 0;
+  const polls = new Map<string, number>();
 
   async function answer(call: RecordedCall, pathParam: string | undefined): Promise<FakeResponse> {
     if (call.operation === 'unknown') {
@@ -485,6 +518,8 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
         return json(200, options.chart ?? CHART);
       case 'listShowEpisodes':
         return json(200, options.episodes ?? EPISODES);
+      case 'createTranscript':
+        return options.created ?? json(202, jobAccepted());
       case 'createQuote':
         return json(200, options.quote ?? QUOTE);
       case 'createUpload':
@@ -515,8 +550,14 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
       case 'getTranscriptJob':
       case 'getTranscriptRead': {
         const id = pathParam ?? '';
-        const fixture =
+        const named =
           call.operation === 'getTranscriptJob' ? options.transcripts?.[id] : options.reads?.[id];
+        let fixture = named;
+        if (Array.isArray(named)) {
+          const seen = polls.get(id) ?? 0;
+          polls.set(id, seen + 1);
+          fixture = named[Math.min(seen, named.length - 1)];
+        }
         if (fixture === undefined) {
           return json(
             404,

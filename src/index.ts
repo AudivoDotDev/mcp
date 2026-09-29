@@ -1,8 +1,9 @@
 /**
  * The package surface, for anyone embedding the server rather than running
  * it: the server factory and the Lambda-shaped handler, the tool tables — the
- * hosted nine and the local-only one — the API client, the base URL guard,
- * and the local server's configuration.
+ * hosted ten, the local-only two, and the local server's whole list — the API
+ * client, the base URL guard, the wait policies, and the local server's
+ * configuration.
  */
 export {
   API_PATHS,
@@ -25,10 +26,18 @@ export {
   type StdioOptions,
 } from './cli.js';
 export { ERROR_TYPES, McpToolError } from './errors.js';
-export { LOCAL_TOOLS, localTools, type LocalToolOptions } from './local-tools.js';
+export {
+  LOCAL_TOOLS,
+  localCatalog,
+  localTools,
+  servedTools,
+  type LocalToolOptions,
+} from './local-tools.js';
+export { HOSTED_WAIT, LOCAL_WAIT, transcribeTool, type WaitPolicy } from './transcribe.js';
 export { renderUpload } from './render.js';
 export {
   SERVER_INFO,
+  SERVER_INSTRUCTIONS,
   createHandler,
   createMcpServer,
   type Logger,

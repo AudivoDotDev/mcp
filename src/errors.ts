@@ -37,6 +37,10 @@ export const LOCAL_ERROR_CODES = [
   'file_not_supported',
   /** The PUT to the presigned URL failed; the announcement stands, but nothing was sent. */
   'upload_failed',
+  /** yt-dlp is not on this machine and could not be installed; nothing was fetched from YouTube. */
+  'youtube_unavailable',
+  /** yt-dlp ran and could not search or download; its own reason is in the message. */
+  'youtube_failed',
 ] as const;
 export type LocalErrorCode = (typeof LOCAL_ERROR_CODES)[number];
 export type ToolErrorCode = ApiErrorCode | LocalErrorCode;
@@ -93,6 +97,13 @@ export const ERROR_TYPES = {
   // POST /v1/uploads's own admission refusal: the account's announced,
   // unexpired uploads are already at the 10 GiB / 100-upload ceiling.
   upload_quota_exceeded: 'rate_limited',
+  // A submit by `upload_id` refused for the reasons a quote excludes an
+  // upload, and the caller's own spend cap. `upload_not_received` is the one
+  // a retry can fix, once the file's PUT has landed.
+  upload_not_found: 'not_found',
+  upload_not_received: 'conflict',
+  upload_mismatch: 'unprocessable_input',
+  max_credits_exceeded: 'unprocessable_input',
   engine_unavailable: 'unavailable',
   processing_failed: 'unavailable',
   discovery_unavailable: 'unavailable',
@@ -168,6 +179,8 @@ const LOCAL_TYPES: Readonly<Record<LocalErrorCode, { type: ApiErrorType; retryab
   api_response_unreadable: { type: 'unavailable', retryable: true },
   file_not_supported: { type: 'invalid_request', retryable: false },
   upload_failed: { type: 'unavailable', retryable: true },
+  youtube_unavailable: { type: 'unavailable', retryable: false },
+  youtube_failed: { type: 'unavailable', retryable: true },
 };
 
 /** A refusal this server makes without, or instead of, an API call. */

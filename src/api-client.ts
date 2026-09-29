@@ -1,5 +1,5 @@
 /**
- * The one way this server reaches the API: ten operations, each typed by
+ * The one way this server reaches the API: twelve operations, each typed by
  * the contract (`contract/types.ts`) and each carrying the caller's
  * own credential for that one call.
  *
@@ -57,6 +57,19 @@ export type TranscriptRead = components['schemas']['TranscriptRead'];
 export type TranscriptReadResponse = Ok<'getTranscriptRead'>;
 export type CanonicalTranscript = components['schemas']['CanonicalTranscript'];
 export type ShowSummary = components['schemas']['ShowSummary'];
+export type TranscriptCreateRequest = components['schemas']['TranscriptCreateRequest'];
+export type TranscriptJobAccepted = components['schemas']['TranscriptJobAccepted'];
+
+/**
+ * What `POST /v1/transcripts` answered, with the status that tells the two
+ * apart: `202` accepted fresh work as a job to poll; `200` delivered a
+ * transcript that already existed, inline or — above the API's inline limit
+ * — by a presigned URL this server never passes on. A dry run is the third
+ * `200` shape and no tool here asks for one.
+ */
+export type TranscriptCreated =
+  | { readonly status: 202; readonly body: TranscriptJobAccepted }
+  | { readonly status: 200; readonly body: TranscriptRead | TranscriptUrlRef };
 export type DiscoveryExclusion = components['schemas']['DiscoveryExclusion'];
 export type JobGroupMember = components['schemas']['JobGroupMember'];
 
@@ -64,6 +77,7 @@ export type JobGroupMember = components['schemas']['JobGroupMember'];
 export const API_PATHS = {
   searchShows: '/v1/search/shows',
   getChart: '/v1/charts',
+  createTranscript: '/v1/transcripts',
   listShowEpisodes: '/v1/shows/{show_id}/episodes',
   createQuote: '/v1/quotes',
   createUpload: '/v1/uploads',
@@ -151,6 +165,16 @@ export type ApiClient = {
       readonly cursor?: string;
     },
   ): Promise<EpisodesListResponse>;
+  /**
+   * One episode, one call: a cached transcript at once (`200`), or a job to
+   * poll (`202`). The `Idempotency-Key` is the tool's, so a repeat of the
+   * same request returns the same answer and charges nothing further.
+   */
+  createTranscript(
+    call: ApiCall,
+    body: TranscriptCreateRequest,
+    idempotencyKey: string,
+  ): Promise<TranscriptCreated>;
   createQuote(call: ApiCall, body: QuoteRequest): Promise<QuoteResponse>;
   /** Announces a file to upload; PUT it next with exactly the returned `put_headers`. */
   createUpload(call: ApiCall, body: CreateUploadRequest): Promise<UploadCreated>;
@@ -202,17 +226,24 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   const timeoutMs = options.timeoutMs ?? DEFAULT_API_TIMEOUT_MS;
   const now = options.now ?? (() => Date.now());
 
-  async function send<T>(
+  type SendRequest = {
+    readonly method: 'GET' | 'POST';
+    readonly path: Readonly<Record<string, string>>;
+    readonly query?: Readonly<Record<string, QueryValue>>;
+    readonly body?: unknown;
+    readonly headers?: Readonly<Record<string, string>>;
+  };
+
+  async function send<T>(call: ApiCall, operation: ApiOperation, request: SendRequest): Promise<T> {
+    return (await sendWithStatus<T>(call, operation, request)).body;
+  }
+
+  /** `send`, keeping the success status for the one operation whose `200` and `202` differ. */
+  async function sendWithStatus<T>(
     call: ApiCall,
     operation: ApiOperation,
-    request: {
-      readonly method: 'GET' | 'POST';
-      readonly path: Readonly<Record<string, string>>;
-      readonly query?: Readonly<Record<string, QueryValue>>;
-      readonly body?: unknown;
-      readonly headers?: Readonly<Record<string, string>>;
-    },
-  ): Promise<T> {
+    request: SendRequest,
+  ): Promise<{ readonly status: number; readonly body: T }> {
     const path = fillPath(API_PATHS[operation], request.path);
     const url = `${baseUrl}${path}${queryString(request.query)}`;
     const body = request.body === undefined ? undefined : JSON.stringify(request.body);
@@ -247,7 +278,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       throw fromApiResponse(response.status, text);
     }
     try {
-      return JSON.parse(text) as T;
+      return { status: response.status, body: JSON.parse(text) as T };
     } catch (cause) {
       throw localError(
         'api_response_unreadable',
@@ -290,6 +321,25 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
           cursor: params.cursor,
         } satisfies Record<keyof operations['listShowEpisodes']['parameters']['query'], QueryValue>,
       }),
+    createTranscript: async (call, body, idempotencyKey) => {
+      const answer = await sendWithStatus<TranscriptCreated['body']>(call, 'createTranscript', {
+        method: 'POST',
+        path: {},
+        body,
+        headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
+      });
+      // Any other 2xx would be a contract change, not a result to guess at.
+      if (answer.status === 202) {
+        return { status: 202, body: answer.body as TranscriptJobAccepted };
+      }
+      if (answer.status === 200) {
+        return { status: 200, body: answer.body as TranscriptRead | TranscriptUrlRef };
+      }
+      throw localError(
+        'api_response_unreadable',
+        `The API answered ${answer.status}, which POST /v1/transcripts does not.`,
+      );
+    },
     createQuote: (call, body) => send(call, 'createQuote', { method: 'POST', path: {}, body }),
     createUpload: (call, body) => send(call, 'createUpload', { method: 'POST', path: {}, body }),
     confirmQuote: (call, params) =>

@@ -15,9 +15,13 @@ export interface paths {
     put?: never;
     /**
      * Create or attach to a transcription job, or get an instant result
-     * @description Accepts exactly one of three input shapes (`url`, `feed_url` + `guid`, or `episode_id`); supplying more than one, or fields from more than one shape, fails schema validation. Returns a synchronous result on a cache hit or publisher-transcript passthrough, or `202` with a job to poll on a miss. `dry_run: true` returns a quote and creates neither a job nor a reservation.
+     * @description The default way to transcribe one episode: one call, no quote first. Accepts exactly one of four input shapes (`url`, `feed_url` + `guid`, `episode_id`, or `upload_id`); supplying more than one, or fields from more than one shape, fails schema validation. Returns a synchronous result on a cache hit or publisher-transcript passthrough, or `202` with a job to poll on a miss. `dry_run: true` returns a quote and creates neither a job nor a reservation.
+     *
+     *     **Spend cap.** `max_credits` is the most this call may take. It is compared with the job's reservation ceiling (the estimate plus 25%, the most a job can settle at) or, for a cached episode, with the cached-read price for this caller, before anything is reserved; a call that could take more is refused `422 max_credits_exceeded` with the figure in the message. The cap never lowers the reservation. A dry run with `max_credits` refuses exactly when the call would.
      *
      *     **Every job belongs to a group.** A single-episode submission is a job group of one: the same submission sequence a quote's confirm fans out over N members, run once, so the two can never disagree. The accepted job carries its `group_id`, which `GET /v1/groups/{group_id}` and `POST /v1/groups/{group_id}/cancel` accept. An `Idempotency-Key`, when sent, is honoured at the group: a repeat returns the original job — or the original cached read — and charges nothing further; its `status` is then the job's current state. A repeat that arrives while the original is still running — its group begun, its member not yet landed — is `409 request_in_progress`: retry with the same key shortly, never a new one, which would start a second job for the same episode.
+     *
+     *     **Uploads.** `upload_id` names a file the caller announced with `POST /v1/uploads` and PUT. It is verified exactly as a quote verifies one — this account's and unexpired, arrived, and matching the announced size and SHA-256 — and refused with its own code when it is not: `404 upload_not_found`, `409 upload_not_received` (retryable once the PUT lands), or `422 upload_mismatch`. It is priced from the declared duration.
      *
      *     **Upload episodes.** `episode_id` may name an episode created from the caller's own upload; it resolves against the upload's stored revision, and an episode that resolves to another account's upload answers `404` before dry-run pricing or cache access runs. A cache miss still prices and reserves at the upload's declared-duration ceiling, and may subsequently fail `upload_missing` if the underlying object has since expired. A cached transcript stays readable after the source upload's `retained_until` passes.
      *
@@ -166,7 +170,7 @@ export interface paths {
      *
      *     **The selection rule, stated once.** Each show contributes either the episodes named in its `episode_ids`, or — when none are named — its newest `episodes_per_show` (default 1). Two tier bounds apply: the chart size, and the total number of episodes one selection may come to. No show may give more than that total on its own, which is the only thing that bounds depth: how far back a selection reaches is the caller's to state, not the plan's to grant. Every bound that bit is reported in `clamps`; every show and every episode that did not make it into `entries` is reported in `excluded` with a reason a caller can read. Nothing shrinks silently.
      *
-     *     **Two request shapes.** `chart` asks the provider for a category chart (clamped exactly as `GET /v1/charts` clamps it) and, because nobody chose those shows, excludes music-led ones unless `include_music_led` is `true`. `shows` names feed URLs — usually straight from a search result — and takes every one as chosen; no category data is consulted for a named show.
+     *     **Three request shapes.** `chart` asks the provider for a category chart (clamped exactly as `GET /v1/charts` clamps it) and, because nobody chose those shows, excludes music-led ones unless `include_music_led` is `true`. `shows` names feed URLs — usually straight from a search result — and takes every one as chosen; no category data is consulted for a named show. `uploads` names files the caller announced and sent with `POST /v1/uploads`; each is verified with one object head and priced from its declared duration.
      *
      *     **One feed fetch per show.** The feeds read to select episodes are the ones the quote prices from; nothing is downloaded twice. Each phase runs under its own wall-clock budget inside the request, and an episode the budget did not reach comes back in `excluded` as `budget_exceeded` rather than failing the request.
      *
@@ -190,7 +194,7 @@ export interface paths {
     put?: never;
     /**
      * Announce a file to upload
-     * @description Records what the caller knows about an audio file and returns a presigned PUT for it. The URL is signed against the declared SHA-256, so S3 refuses a body whose hash differs; the API never reads the bytes. Send the file with exactly the `put_headers` returned. Then name it in a quote as `uploads: [{ upload_id }]`.
+     * @description Records what the caller knows about an audio file and returns a presigned PUT for it. The URL is signed against the declared SHA-256, so S3 refuses a body whose hash differs; the API never reads the bytes. Send the file with exactly the `put_headers` returned. Then transcribe it with `POST /v1/transcripts` and `{ "upload_id": … }`, or name it in a quote as `uploads: [{ upload_id }]` alongside others.
      *     The upload is private to the account: its transcript is cached for this account alone. The upload becomes unavailable at `retained_until`; a quote after that reports `upload_not_found`. Physical object and record cleanup is asynchronous. Each account may announce at most 10 GiB across 100 unexpired uploads. Announcements reserve this allowance even if no file is sent; capacity returns at their logical expiry. A refusal returns `429 upload_quota_exceeded` before a PUT URL is issued.
      */
     post: operations['createUpload'];
@@ -756,7 +760,7 @@ export interface components {
       | 'rate_limited'
       | 'unavailable';
     /**
-     * @description Every code the API returns, and the HTTP status it comes with. `invalid_request`, `invalid_url` → 400. `unauthenticated` → 401. `payment_required` → 402. `job_not_found`, `quote_not_found`, `group_not_found`, `api_key_not_found`, `credit_lot_not_found` → 404. `idempotency_conflict`, `request_in_progress`, `job_not_completed`, `quote_expired`, `quote_mismatch`, `quote_unverified`, `expected_total_mismatch`, `account_suspended`, `account_closed`, `account_not_found`, `api_key_limit_reached`, `tier_unchanged` → 409. `source_not_supported`, `feed_dead`, `episode_not_found`, `show_not_found`, `unsafe_source`, `unsupported_codec`, `unsupported_language`, `duration_exceeded`, `size_exceeded`, `nothing_to_quote`, `credits_not_refundable` → 422. `content_blocked` → 451. `rate_limited`, `concurrency_limited`, `upload_quota_exceeded` → 429; `upload_quota_exceeded` is retryable, at the earliest capacity return time its message names. `internal_error`, `processing_failed` → 500. `discovery_unavailable`, `engine_unavailable` → 503. `processing_failed` also appears inside a failed job's `error` field rather than as a live status. Each code has a heading on the documentation site's errors page, which is what `doc_url` links to.
+     * @description Every code the API returns, and the HTTP status it comes with. `invalid_request`, `invalid_url` → 400. `unauthenticated` → 401. `payment_required` → 402. `job_not_found`, `quote_not_found`, `group_not_found`, `api_key_not_found`, `credit_lot_not_found`, `upload_not_found` → 404. `idempotency_conflict`, `request_in_progress`, `job_not_completed`, `quote_expired`, `quote_mismatch`, `quote_unverified`, `expected_total_mismatch`, `account_suspended`, `account_closed`, `account_not_found`, `api_key_limit_reached`, `tier_unchanged`, `upload_not_received` → 409; `upload_not_received` is retryable once the file's PUT has landed. `source_not_supported`, `feed_dead`, `episode_not_found`, `show_not_found`, `unsafe_source`, `unsupported_codec`, `unsupported_language`, `duration_exceeded`, `size_exceeded`, `nothing_to_quote`, `credits_not_refundable`, `upload_mismatch`, `max_credits_exceeded` → 422. `content_blocked` → 451. `rate_limited`, `concurrency_limited`, `upload_quota_exceeded` → 429; `upload_quota_exceeded` is retryable, at the earliest capacity return time its message names. `internal_error`, `processing_failed` → 500. `discovery_unavailable`, `engine_unavailable` → 503. `processing_failed` also appears inside a failed job's `error` field rather than as a live status. Each code has a heading on the documentation site's errors page, which is what `doc_url` links to.
      * @enum {string}
      */
     ErrorCode:
@@ -799,7 +803,11 @@ export interface components {
       | 'account_closed'
       | 'account_not_found'
       | 'tier_unchanged'
-      | 'upload_quota_exceeded';
+      | 'upload_quota_exceeded'
+      | 'upload_not_found'
+      | 'upload_not_received'
+      | 'upload_mismatch'
+      | 'max_credits_exceeded';
     ErrorDetail: {
       type: components['schemas']['ErrorType'];
       code: components['schemas']['ErrorCode'];
@@ -822,7 +830,9 @@ export interface components {
             | 'size_exceeded'
             | 'unsupported_codec'
             | 'unsupported_language'
-            | 'credits_not_refundable';
+            | 'credits_not_refundable'
+            | 'upload_mismatch'
+            | 'max_credits_exceeded';
           /** @constant */
           type: 'unprocessable_input';
         }
@@ -846,7 +856,8 @@ export interface components {
             | 'account_closed'
             | 'account_not_found'
             | 'api_key_limit_reached'
-            | 'tier_unchanged';
+            | 'tier_unchanged'
+            | 'upload_not_received';
           /** @constant */
           type: 'conflict';
         }
@@ -860,7 +871,8 @@ export interface components {
             | 'quote_not_found'
             | 'group_not_found'
             | 'api_key_not_found'
-            | 'credit_lot_not_found';
+            | 'credit_lot_not_found'
+            | 'upload_not_found';
           /** @constant */
           type: 'not_found';
         }
@@ -1057,6 +1069,8 @@ export interface components {
       format?: components['schemas']['TranscriptFormat'];
       /** @default false */
       dry_run: boolean;
+      /** @description The most this call may take; refused `422 max_credits_exceeded` before anything is reserved when it could take more. Omit for no cap beyond the balance. */
+      max_credits?: components['schemas']['CreditAmount'];
     };
     TranscriptCreateByFeedGuid: {
       feed_url: components['schemas']['FeedUrl'];
@@ -1065,6 +1079,8 @@ export interface components {
       format?: components['schemas']['TranscriptFormat'];
       /** @default false */
       dry_run: boolean;
+      /** @description The most this call may take; refused `422 max_credits_exceeded` before anything is reserved when it could take more. Omit for no cap beyond the balance. */
+      max_credits?: components['schemas']['CreditAmount'];
     };
     TranscriptCreateByEpisodeId: {
       episode_id: components['schemas']['EpisodeId'];
@@ -1072,12 +1088,24 @@ export interface components {
       format?: components['schemas']['TranscriptFormat'];
       /** @default false */
       dry_run: boolean;
+      /** @description The most this call may take; refused `422 max_credits_exceeded` before anything is reserved when it could take more. Omit for no cap beyond the balance. */
+      max_credits?: components['schemas']['CreditAmount'];
     };
-    /** @description Exactly one of `url`, `feed_url`+`guid`, or `episode_id`. `format` is delivery-only and never affects the cache key or the produced transcript. Raw-audio URLs, uploads, engine selection, diarization, vocabulary, and callback URLs are rejected rather than ignored. */
+    TranscriptCreateByUpload: {
+      upload_id: components['schemas']['UploadId'];
+      language?: components['schemas']['NullableLanguage'];
+      format?: components['schemas']['TranscriptFormat'];
+      /** @default false */
+      dry_run: boolean;
+      /** @description The most this call may take; refused `422 max_credits_exceeded` before anything is reserved when it could take more. Omit for no cap beyond the balance. */
+      max_credits?: components['schemas']['CreditAmount'];
+    };
+    /** @description Exactly one of `url`, `feed_url`+`guid`, `episode_id`, or `upload_id`. `format` is delivery-only and never affects the cache key or the produced transcript. Raw-audio URLs, engine selection, diarization, vocabulary, and callback URLs are rejected rather than ignored. */
     TranscriptCreateRequest:
       | components['schemas']['TranscriptCreateByUrl']
       | components['schemas']['TranscriptCreateByFeedGuid']
-      | components['schemas']['TranscriptCreateByEpisodeId'];
+      | components['schemas']['TranscriptCreateByEpisodeId']
+      | components['schemas']['TranscriptCreateByUpload'];
     /**
      * @description Legal transitions: validating → queued|failed|cancelled; queued → downloading|failed|cancelled; downloading → transcribing|failed; transcribing → merging|failed; merging → completed|failed. Terminal states (completed, failed, cancelled) have no further transitions. Cancellation is legal only from validating/queued; every non-terminal state may fail.
      * @enum {string}
@@ -1197,7 +1225,7 @@ export interface components {
       /** @description The file's exact length; the PUT must carry the same `Content-Length`. */
       bytes: number;
       content_type: components['schemas']['UploadContentType'];
-      /** @description What the quote is priced from. A job whose audio runs past the ceiling this reserves fails as `declared_duration_exceeded` and releases the reservation. */
+      /** @description What the quote is priced from. A job whose audio runs past the ceiling this reserves fails as `processing_failed`, with a message naming the declared-duration ceiling, and releases the reservation. */
       declared_duration_seconds: number;
       /** @description How the entry is labelled; the private show is always "Uploads". */
       title?: string;
