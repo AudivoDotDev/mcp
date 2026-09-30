@@ -16,7 +16,7 @@ Two ways to connect. The hosted endpoint serves ten tools. The local server serv
 |               | Hosted                                                            | Local                                                                       |
 | ------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | Where it runs | Audivo's servers                                                  | Your machine, spawned by the client                                         |
-| Transport     | Streamable HTTP at `https://api.audivo.dev/mcp`                   | stdio via `npx -y @audivo/mcp`                                              |
+| Transport     | Streamable HTTP at `https://api.audivo.dev/mcp`                   | stdio via `npx -y @audivo/mcp@latest`                                       |
 | Credential    | Sign in with OAuth, or `Authorization: Bearer hk_live_…`          | `AUDIVO_API_KEY` environment variable                                       |
 | Good for      | Claude on the web and desktop, ChatGPT, anything that takes a URL | Claude Code, Codex, Cursor, VS Code, and every client that spawns a process |
 | YouTube       | No                                                                | Yes, downloaded on your machine with yt-dlp                                 |
@@ -67,13 +67,13 @@ key in the environment the client starts the server with, then add the server.
 this server and the skill together)
 
 ```bash
-claude mcp add --scope user audivo -e AUDIVO_API_KEY=hk_live_... -- npx -y @audivo/mcp
+claude mcp add --scope user audivo -e AUDIVO_API_KEY=hk_live_... -- npx -y @audivo/mcp@latest
 ```
 
 **Codex**
 
 ```bash
-codex mcp add audivo --env AUDIVO_API_KEY=hk_live_... -- npx -y @audivo/mcp
+codex mcp add audivo --env AUDIVO_API_KEY=hk_live_... -- npx -y @audivo/mcp@latest
 ```
 
 **Cursor, Claude Desktop, Windsurf, and other JSON-configured clients**
@@ -83,7 +83,7 @@ codex mcp add audivo --env AUDIVO_API_KEY=hk_live_... -- npx -y @audivo/mcp
   "mcpServers": {
     "audivo": {
       "command": "npx",
-      "args": ["-y", "@audivo/mcp"],
+      "args": ["-y", "@audivo/mcp@latest"],
       "env": { "AUDIVO_API_KEY": "hk_live_..." }
     }
   }
@@ -98,7 +98,7 @@ codex mcp add audivo --env AUDIVO_API_KEY=hk_live_... -- npx -y @audivo/mcp
     "audivo": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@audivo/mcp"],
+      "args": ["-y", "@audivo/mcp@latest"],
       "env": { "AUDIVO_API_KEY": "hk_live_..." }
     }
   }
@@ -106,6 +106,14 @@ codex mcp add audivo --env AUDIVO_API_KEY=hk_live_... -- npx -y @audivo/mcp
 ```
 
 Keep files that contain a real key out of Git and shared chats.
+
+### Updating
+
+`@latest` makes npx look the package up on npm each time the client starts the server, so a new
+release arrives with your next session. To get it in the session you are in, restart the server: in
+Claude Code, `/mcp`, choose `audivo`, then **Reconnect**. A spec without `@latest` works too, but
+a bare `@audivo/mcp` resolves to a copy in the current project first, when there is one. The hosted
+server at `https://api.audivo.dev/mcp` is kept current by Audivo.
 
 ### Environment
 
