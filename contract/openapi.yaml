@@ -20,6 +20,18 @@ info:
     any quote response.
 
 
+    The hosted MCP server at `/mcp` and the OAuth 2.1 endpoints that
+    connect an assistant to it — `/.well-known/oauth-protected-resource`,
+    `/.well-known/oauth-authorization-server`, and `/oauth/authorize`,
+    `/oauth/token`, `/oauth/register`, `/oauth/revoke` — are protocol
+    transports on the same host, not contract operations: an MCP client
+    discovers and describes them from those two metadata documents (RFC
+    9728, RFC 8414), and they are documented with the MCP server. Their
+    access tokens are checked by the same authorizer as an API key and
+    metered by the same plan; the consent they need is two dashboard
+    operations below, under **Connected Apps**.
+
+
     Deferred on purpose, and absent from this document rather than hidden:
     webhooks, subscriptions, speaker labels beyond the frozen
     `diarized: false` shape, custom vocabulary, caller-selected engines,
@@ -72,6 +84,10 @@ tags:
     description: Usage, limits, and supported languages for the calling account.
   - name: API Keys
     description: Dashboard-JWT key lifecycle management.
+  - name: Connected Apps
+    description: >-
+      Dashboard-JWT consent for an assistant connecting to the MCP server
+      through OAuth, and the account's connected apps, each revocable.
   - name: Billing
     description: Dashboard-JWT Stripe Checkout, Customer Portal, invoices, and refunds.
   - name: Data
@@ -1383,6 +1399,137 @@ paths:
           $ref: '#/components/responses/TooManyRequestsDashboard'
         '500':
           $ref: '#/components/responses/InternalErrorDashboard'
+  /v1/oauth/requests/{request_id}:
+    get:
+      operationId: getOAuthRequest
+      tags: [Connected Apps]
+      summary: Read a pending connection request
+      security:
+        - dashboardJwt: []
+      description: >-
+        What the consent page shows for an app asking to connect: the app,
+        where its authorization code would be sent, and what the scope
+        allows. Read back from the request the authorization endpoint
+        recorded — nothing here comes from the page's own URL. `client.verified`
+        is `true` only when something the app cannot forge (its metadata
+        document's address, or its redirect's host) says who it is; otherwise
+        `client.name` is the app's own claim. A request lives ten minutes and
+        is consumed by its decision.
+      parameters:
+        - $ref: '#/components/parameters/OAuthRequestIdPathParam'
+      responses:
+        '200':
+          description: The pending request.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthRequestView'
+        '401':
+          $ref: '#/components/responses/UnauthorizedDashboard'
+        '404':
+          $ref: '#/components/responses/NotFoundDashboard'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsDashboard'
+        '500':
+          $ref: '#/components/responses/InternalErrorDashboard'
+  /v1/oauth/requests/{request_id}/decision:
+    post:
+      operationId: decideOAuthRequest
+      tags: [Connected Apps]
+      summary: Approve or decline a connection request
+      security:
+        - dashboardJwt: []
+      description: >-
+        The signed-in account holder's answer. Approving connects the app to
+        this account: a one-use authorization code and the connection
+        (`grant_id`) are created and the request consumed in one write, and
+        `redirect_to` is the app's redirect carrying `code`, `state`, and
+        `iss`. Declining consumes the request and `redirect_to` carries
+        `error=access_denied`. The caller sends the browser to `redirect_to`;
+        this API never redirects. A request approved twice connects once.
+      parameters:
+        - $ref: '#/components/parameters/OAuthRequestIdPathParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthDecisionRequest'
+      responses:
+        '200':
+          description: Where to send the browser.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthDecision'
+        '400':
+          $ref: '#/components/responses/BadRequestDashboard'
+        '401':
+          $ref: '#/components/responses/UnauthorizedDashboard'
+        '404':
+          $ref: '#/components/responses/NotFoundDashboard'
+        '409':
+          $ref: '#/components/responses/ConflictAccountStateDashboard'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsDashboard'
+        '500':
+          $ref: '#/components/responses/InternalErrorDashboard'
+  /v1/connected-apps:
+    get:
+      operationId: listConnectedApps
+      tags: [Connected Apps]
+      summary: List the account's connected apps
+      security:
+        - dashboardJwt: []
+      description: >-
+        Every app connected through OAuth, newest first, revoked ones
+        included. `last_used_at` is when the connection last obtained a
+        token.
+      responses:
+        '200':
+          description: The account's connected apps.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectedAppsListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedDashboard'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsDashboard'
+        '500':
+          $ref: '#/components/responses/InternalErrorDashboard'
+  /v1/connected-apps/{grant_id}:
+    delete:
+      operationId: revokeConnectedApp
+      tags: [Connected Apps]
+      summary: Revoke a connected app
+      security:
+        - dashboardJwt: []
+      description: >-
+        Ends the connection: every access token it issued stops working
+        within five minutes, the same bound as a revoked API key, and it can
+        refresh nothing. Idempotent; available on an account on hold.
+      parameters:
+        - $ref: '#/components/parameters/GrantIdPathParam'
+      responses:
+        '204':
+          description: The connection is revoked (or was already revoked).
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+        '401':
+          $ref: '#/components/responses/UnauthorizedDashboard'
+        '404':
+          $ref: '#/components/responses/NotFoundDashboard'
+        '429':
+          $ref: '#/components/responses/TooManyRequestsDashboard'
+        '500':
+          $ref: '#/components/responses/InternalErrorDashboard'
   /v1/logs:
     get:
       operationId: listRequestLogs
@@ -2013,6 +2160,18 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/KeyId'
+    OAuthRequestIdPathParam:
+      name: request_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/OAuthRequestId'
+    GrantIdPathParam:
+      name: grant_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/GrantId'
     QuoteIdPathParam:
       name: quote_id
       in: path
@@ -2638,9 +2797,12 @@ components:
     NotFoundDashboard:
       description: >-
         The referenced resource does not exist or does not belong to this
-        account. Codes: `api_key_not_found` (`DELETE /v1/api-keys/{key_id}`)
-        or `credit_lot_not_found` (`POST /v1/billing/refund`) — each
-        operation emits only the one code for the resource it looks up.
+        account. Codes: `api_key_not_found` (`DELETE /v1/api-keys/{key_id}`),
+        `credit_lot_not_found` (`POST /v1/billing/refund`),
+        `oauth_request_not_found` (the two `/v1/oauth/requests/{request_id}`
+        operations: decided already, or past its ten minutes), or
+        `connected_app_not_found` (`DELETE /v1/connected-apps/{grant_id}`) —
+        each operation emits only the one code for the resource it looks up.
       headers:
         X-Request-Id: { $ref: '#/components/headers/XRequestId' }
       content:
@@ -2930,12 +3092,15 @@ components:
         - upload_not_received
         - upload_mismatch
         - max_credits_exceeded
+        - oauth_request_not_found
+        - connected_app_not_found
       description: >-
         Every code the API returns, and the HTTP status it comes with.
         `invalid_request`, `invalid_url` → 400. `unauthenticated` → 401.
         `payment_required` → 402. `job_not_found`, `quote_not_found`,
         `group_not_found`, `api_key_not_found`, `credit_lot_not_found`,
-        `upload_not_found` → 404.
+        `upload_not_found`, `oauth_request_not_found`,
+        `connected_app_not_found` → 404.
         `idempotency_conflict`, `request_in_progress`, `job_not_completed`,
         `quote_expired`, `quote_mismatch`, `quote_unverified`,
         `expected_total_mismatch`, `account_suspended`, `account_closed`,
@@ -3053,6 +3218,8 @@ components:
                   api_key_not_found,
                   credit_lot_not_found,
                   upload_not_found,
+                  oauth_request_not_found,
+                  connected_app_not_found,
                 ]
             type: { const: not_found }
         - required: [code, type]
@@ -4949,6 +5116,134 @@ components:
           type: boolean
         revoked_at:
           $ref: '#/components/schemas/NullableDateTime'
+    OAuthRequestId:
+      type: string
+      pattern: '^oar_[a-f0-9]{24}$'
+      maxLength: 40
+      description: A pending OAuth authorization request, as the consent page's URL carries it.
+    GrantId:
+      type: string
+      pattern: '^oag_[a-f0-9]{24}$'
+      maxLength: 40
+      description: A connected app — one OAuth grant.
+    OAuthRequestView:
+      type: object
+      additionalProperties: false
+      required: [request_id, client, redirect, scope, scope_description, expires_at]
+      properties:
+        request_id:
+          $ref: '#/components/schemas/OAuthRequestId'
+        client:
+          type: object
+          additionalProperties: false
+          required: [name, verified, client_id, kind]
+          properties:
+            name:
+              type: string
+              maxLength: 100
+            verified:
+              type: boolean
+              description: >-
+                Whether the name is vouched for by where the code goes or by
+                the app's metadata document, rather than claimed.
+            client_id:
+              type: string
+              maxLength: 2048
+            kind:
+              type: string
+              enum: [metadata_document, registered]
+        redirect:
+          type: object
+          additionalProperties: false
+          required: [target, loopback]
+          properties:
+            target:
+              type: string
+              maxLength: 300
+              description: The host (or, for a native app, the scheme) the code is sent to.
+            loopback:
+              type: boolean
+              description: >-
+                A redirect to this computer: any program on it could be the
+                listener, which the consent page warns about.
+        scope:
+          type: string
+          maxLength: 100
+        scope_description:
+          type: string
+          maxLength: 300
+        expires_at:
+          type: string
+          format: date-time
+    OAuthDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [approve]
+      properties:
+        approve:
+          type: boolean
+    OAuthDecision:
+      type: object
+      additionalProperties: false
+      required: [redirect_to]
+      properties:
+        redirect_to:
+          type: string
+          format: uri
+          maxLength: 4096
+          description: >-
+            The app's redirect, carrying `code`, `state` and `iss` on an
+            approval, or `error=access_denied` on a refusal.
+        grant_id:
+          $ref: '#/components/schemas/GrantId'
+    ConnectedApp:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          grant_id,
+          client_name,
+          verified,
+          redirect_target,
+          scope,
+          created_at,
+          last_used_at,
+          revoked,
+          revoked_at,
+        ]
+      properties:
+        grant_id:
+          $ref: '#/components/schemas/GrantId'
+        client_name:
+          type: string
+          maxLength: 100
+        verified:
+          type: boolean
+        redirect_target:
+          type: string
+          maxLength: 300
+        scope:
+          type: string
+          maxLength: 100
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          $ref: '#/components/schemas/NullableDateTime'
+        revoked:
+          type: boolean
+        revoked_at:
+          $ref: '#/components/schemas/NullableDateTime'
+    ConnectedAppsListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ConnectedApp'
     ApiKeysListResponse:
       type: object
       additionalProperties: false

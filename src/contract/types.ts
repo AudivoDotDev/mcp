@@ -470,6 +470,86 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/v1/oauth/requests/{request_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Read a pending connection request
+     * @description What the consent page shows for an app asking to connect: the app, where its authorization code would be sent, and what the scope allows. Read back from the request the authorization endpoint recorded — nothing here comes from the page's own URL. `client.verified` is `true` only when something the app cannot forge (its metadata document's address, or its redirect's host) says who it is; otherwise `client.name` is the app's own claim. A request lives ten minutes and is consumed by its decision.
+     */
+    get: operations['getOAuthRequest'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/oauth/requests/{request_id}/decision': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Approve or decline a connection request
+     * @description The signed-in account holder's answer. Approving connects the app to this account: a one-use authorization code and the connection (`grant_id`) are created and the request consumed in one write, and `redirect_to` is the app's redirect carrying `code`, `state`, and `iss`. Declining consumes the request and `redirect_to` carries `error=access_denied`. The caller sends the browser to `redirect_to`; this API never redirects. A request approved twice connects once.
+     */
+    post: operations['decideOAuthRequest'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/connected-apps': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List the account's connected apps
+     * @description Every app connected through OAuth, newest first, revoked ones included. `last_used_at` is when the connection last obtained a token.
+     */
+    get: operations['listConnectedApps'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/v1/connected-apps/{grant_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Revoke a connected app
+     * @description Ends the connection: every access token it issued stops working within five minutes, the same bound as a revoked API key, and it can refresh nothing. Idempotent; available on an account on hold.
+     */
+    delete: operations['revokeConnectedApp'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/v1/logs': {
     parameters: {
       query?: never;
@@ -760,7 +840,7 @@ export interface components {
       | 'rate_limited'
       | 'unavailable';
     /**
-     * @description Every code the API returns, and the HTTP status it comes with. `invalid_request`, `invalid_url` → 400. `unauthenticated` → 401. `payment_required` → 402. `job_not_found`, `quote_not_found`, `group_not_found`, `api_key_not_found`, `credit_lot_not_found`, `upload_not_found` → 404. `idempotency_conflict`, `request_in_progress`, `job_not_completed`, `quote_expired`, `quote_mismatch`, `quote_unverified`, `expected_total_mismatch`, `account_suspended`, `account_closed`, `account_not_found`, `api_key_limit_reached`, `tier_unchanged`, `upload_not_received` → 409; `upload_not_received` is retryable once the file's PUT has landed. `source_not_supported`, `feed_dead`, `episode_not_found`, `show_not_found`, `unsafe_source`, `unsupported_codec`, `unsupported_language`, `duration_exceeded`, `size_exceeded`, `nothing_to_quote`, `credits_not_refundable`, `upload_mismatch`, `max_credits_exceeded` → 422. `content_blocked` → 451. `rate_limited`, `concurrency_limited`, `upload_quota_exceeded` → 429; `upload_quota_exceeded` is retryable, at the earliest capacity return time its message names. `internal_error`, `processing_failed` → 500. `discovery_unavailable`, `engine_unavailable` → 503. `processing_failed` also appears inside a failed job's `error` field rather than as a live status. Each code has a heading on the documentation site's errors page, which is what `doc_url` links to.
+     * @description Every code the API returns, and the HTTP status it comes with. `invalid_request`, `invalid_url` → 400. `unauthenticated` → 401. `payment_required` → 402. `job_not_found`, `quote_not_found`, `group_not_found`, `api_key_not_found`, `credit_lot_not_found`, `upload_not_found`, `oauth_request_not_found`, `connected_app_not_found` → 404. `idempotency_conflict`, `request_in_progress`, `job_not_completed`, `quote_expired`, `quote_mismatch`, `quote_unverified`, `expected_total_mismatch`, `account_suspended`, `account_closed`, `account_not_found`, `api_key_limit_reached`, `tier_unchanged`, `upload_not_received` → 409; `upload_not_received` is retryable once the file's PUT has landed. `source_not_supported`, `feed_dead`, `episode_not_found`, `show_not_found`, `unsafe_source`, `unsupported_codec`, `unsupported_language`, `duration_exceeded`, `size_exceeded`, `nothing_to_quote`, `credits_not_refundable`, `upload_mismatch`, `max_credits_exceeded` → 422. `content_blocked` → 451. `rate_limited`, `concurrency_limited`, `upload_quota_exceeded` → 429; `upload_quota_exceeded` is retryable, at the earliest capacity return time its message names. `internal_error`, `processing_failed` → 500. `discovery_unavailable`, `engine_unavailable` → 503. `processing_failed` also appears inside a failed job's `error` field rather than as a live status. Each code has a heading on the documentation site's errors page, which is what `doc_url` links to.
      * @enum {string}
      */
     ErrorCode:
@@ -807,7 +887,9 @@ export interface components {
       | 'upload_not_found'
       | 'upload_not_received'
       | 'upload_mismatch'
-      | 'max_credits_exceeded';
+      | 'max_credits_exceeded'
+      | 'oauth_request_not_found'
+      | 'connected_app_not_found';
     ErrorDetail: {
       type: components['schemas']['ErrorType'];
       code: components['schemas']['ErrorCode'];
@@ -872,7 +954,9 @@ export interface components {
             | 'group_not_found'
             | 'api_key_not_found'
             | 'credit_lot_not_found'
-            | 'upload_not_found';
+            | 'upload_not_found'
+            | 'oauth_request_not_found'
+            | 'connected_app_not_found';
           /** @constant */
           type: 'not_found';
         }
@@ -1604,6 +1688,57 @@ export interface components {
       revoked: boolean;
       revoked_at?: components['schemas']['NullableDateTime'];
     };
+    /** @description A pending OAuth authorization request, as the consent page's URL carries it. */
+    OAuthRequestId: string;
+    /** @description A connected app — one OAuth grant. */
+    GrantId: string;
+    OAuthRequestView: {
+      request_id: components['schemas']['OAuthRequestId'];
+      client: {
+        name: string;
+        /** @description Whether the name is vouched for by where the code goes or by the app's metadata document, rather than claimed. */
+        verified: boolean;
+        client_id: string;
+        /** @enum {string} */
+        kind: 'metadata_document' | 'registered';
+      };
+      redirect: {
+        /** @description The host (or, for a native app, the scheme) the code is sent to. */
+        target: string;
+        /** @description A redirect to this computer: any program on it could be the listener, which the consent page warns about. */
+        loopback: boolean;
+      };
+      scope: string;
+      scope_description: string;
+      /** Format: date-time */
+      expires_at: string;
+    };
+    OAuthDecisionRequest: {
+      approve: boolean;
+    };
+    OAuthDecision: {
+      /**
+       * Format: uri
+       * @description The app's redirect, carrying `code`, `state` and `iss` on an approval, or `error=access_denied` on a refusal.
+       */
+      redirect_to: string;
+      grant_id?: components['schemas']['GrantId'];
+    };
+    ConnectedApp: {
+      grant_id: components['schemas']['GrantId'];
+      client_name: string;
+      verified: boolean;
+      redirect_target: string;
+      scope: string;
+      /** Format: date-time */
+      created_at: string;
+      last_used_at: components['schemas']['NullableDateTime'];
+      revoked: boolean;
+      revoked_at: components['schemas']['NullableDateTime'];
+    };
+    ConnectedAppsListResponse: {
+      data: components['schemas']['ConnectedApp'][];
+    };
     ApiKeysListResponse: {
       data: components['schemas']['ApiKeySummary'][];
     };
@@ -1998,7 +2133,7 @@ export interface components {
         'application/json': components['schemas']['Error'];
       };
     };
-    /** @description The referenced resource does not exist or does not belong to this account. Codes: `api_key_not_found` (`DELETE /v1/api-keys/{key_id}`) or `credit_lot_not_found` (`POST /v1/billing/refund`) — each operation emits only the one code for the resource it looks up. */
+    /** @description The referenced resource does not exist or does not belong to this account. Codes: `api_key_not_found` (`DELETE /v1/api-keys/{key_id}`), `credit_lot_not_found` (`POST /v1/billing/refund`), `oauth_request_not_found` (the two `/v1/oauth/requests/{request_id}` operations: decided already, or past its ten minutes), or `connected_app_not_found` (`DELETE /v1/connected-apps/{grant_id}`) — each operation emits only the one code for the resource it looks up. */
     NotFoundDashboard: {
       headers: {
         'X-Request-Id': components['headers']['XRequestId'];
@@ -2087,6 +2222,8 @@ export interface components {
     ShowIdPathParam: components['schemas']['ShowId'];
     EpisodeIdPathParam: components['schemas']['EpisodeId'];
     KeyIdPathParam: components['schemas']['KeyId'];
+    OAuthRequestIdPathParam: components['schemas']['OAuthRequestId'];
+    GrantIdPathParam: components['schemas']['GrantId'];
     QuoteIdPathParam: components['schemas']['QuoteId'];
     GroupIdPathParam: components['schemas']['GroupId'];
     /** @description Maximum number of items to return. */
@@ -2841,6 +2978,115 @@ export interface operations {
     requestBody?: never;
     responses: {
       /** @description The key is revoked (or was already revoked). */
+      204: {
+        headers: {
+          'X-Request-Id': components['headers']['XRequestId'];
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      401: components['responses']['UnauthorizedDashboard'];
+      404: components['responses']['NotFoundDashboard'];
+      429: components['responses']['TooManyRequestsDashboard'];
+      500: components['responses']['InternalErrorDashboard'];
+    };
+  };
+  getOAuthRequest: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        request_id: components['parameters']['OAuthRequestIdPathParam'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The pending request. */
+      200: {
+        headers: {
+          'X-Request-Id': components['headers']['XRequestId'];
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['OAuthRequestView'];
+        };
+      };
+      401: components['responses']['UnauthorizedDashboard'];
+      404: components['responses']['NotFoundDashboard'];
+      429: components['responses']['TooManyRequestsDashboard'];
+      500: components['responses']['InternalErrorDashboard'];
+    };
+  };
+  decideOAuthRequest: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        request_id: components['parameters']['OAuthRequestIdPathParam'];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['OAuthDecisionRequest'];
+      };
+    };
+    responses: {
+      /** @description Where to send the browser. */
+      200: {
+        headers: {
+          'X-Request-Id': components['headers']['XRequestId'];
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['OAuthDecision'];
+        };
+      };
+      400: components['responses']['BadRequestDashboard'];
+      401: components['responses']['UnauthorizedDashboard'];
+      404: components['responses']['NotFoundDashboard'];
+      409: components['responses']['ConflictAccountStateDashboard'];
+      429: components['responses']['TooManyRequestsDashboard'];
+      500: components['responses']['InternalErrorDashboard'];
+    };
+  };
+  listConnectedApps: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The account's connected apps. */
+      200: {
+        headers: {
+          'X-Request-Id': components['headers']['XRequestId'];
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ConnectedAppsListResponse'];
+        };
+      };
+      401: components['responses']['UnauthorizedDashboard'];
+      429: components['responses']['TooManyRequestsDashboard'];
+      500: components['responses']['InternalErrorDashboard'];
+    };
+  };
+  revokeConnectedApp: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        grant_id: components['parameters']['GrantIdPathParam'];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The connection is revoked (or was already revoked). */
       204: {
         headers: {
           'X-Request-Id': components['headers']['XRequestId'];

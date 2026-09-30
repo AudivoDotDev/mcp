@@ -90,6 +90,10 @@ export const ERROR_TYPES = {
   group_not_found: 'not_found',
   api_key_not_found: 'not_found',
   credit_lot_not_found: 'not_found',
+  // The dashboard's OAuth consent and connected-apps operations (ADR-0035).
+  // No tool reaches them; listed because the contract declares them.
+  oauth_request_not_found: 'not_found',
+  connected_app_not_found: 'not_found',
   content_blocked: 'content_blocked',
   payment_required: 'payment_required',
   rate_limited: 'rate_limited',
