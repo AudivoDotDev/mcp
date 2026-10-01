@@ -112,6 +112,7 @@ export function stdioDeps(
     // client lets it, and says how it is going where the client asked.
     wait: LOCAL_WAIT,
     progress: true,
+    surface: 'local',
   };
 }
 

@@ -7,7 +7,7 @@
  * imports none of them — a cycle between a catalog and a tool it lists is a
  * module that reads a binding before it exists.
  */
-import type { ToolAnnotations } from '@modelcontextprotocol/server';
+import type { Icon, ToolAnnotations } from '@modelcontextprotocol/server';
 import type * as z from 'zod';
 import type { ApiCall, ApiClient, TraceEntry } from './api-client.js';
 import { NO_CREDENTIAL_MESSAGE, localError } from './errors.js';
@@ -50,9 +50,15 @@ export type ToolContext = {
 export type ToolDefinition<S extends z.ZodObject = z.ZodObject> = {
   readonly name: string;
   readonly title: string;
+  /** What the hosted server says the tool does. Names no tool the hosted server lacks. */
   readonly description: string;
+  /** What the local server says instead, where it can do more (a file, a YouTube link). */
+  readonly localDescription?: string;
   readonly inputSchema: S;
   readonly annotations: ToolAnnotations;
+  /** The tool's `_meta` on every surface: its app, entrypoints and status text (ADR-0036). */
+  readonly meta?: Readonly<Record<string, unknown>>;
+  readonly icons?: readonly Icon[];
   readonly handler: (args: z.infer<S>, ctx: ToolContext) => Promise<Document>;
 };
 

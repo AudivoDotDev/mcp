@@ -409,8 +409,12 @@ export function localCatalog(options: LocalToolOptions = {}): {
  */
 export function servedTools(options: LocalToolOptions = {}): readonly AnyToolDefinition[] {
   const catalog = localCatalog(options);
+  // The hosted catalog, with the local wording where a tool has one: the
+  // hosted descriptions name no tool the hosted server lacks.
+  const local = (tool: AnyToolDefinition): AnyToolDefinition =>
+    tool.localDescription === undefined ? tool : { ...tool, description: tool.localDescription };
   return Object.freeze([
-    ...TOOLS.map((tool) => (tool.name === 'transcribe' ? catalog.transcribe : tool)),
+    ...TOOLS.map((tool) => (tool.name === 'transcribe' ? catalog.transcribe : local(tool))),
     ...catalog.localOnly,
   ]);
 }

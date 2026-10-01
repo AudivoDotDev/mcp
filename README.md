@@ -9,9 +9,9 @@ Ask for an episode; get the transcript back.
 
 > Transcribe the latest episode of Acquired and summarise it.
 
-Two ways to connect. The hosted endpoint serves ten tools. The local server serves the same ten, with
-`transcribe` also taking a file on your machine or a YouTube link, plus `upload_audio` and
-`youtube_search`.
+Two ways to connect. The hosted endpoint serves eleven tools. The local server serves the same
+eleven, with `transcribe` also taking a file on your machine or a YouTube link, plus `upload_audio`
+and `youtube_search`. Both serve an [app](#the-app) to clients that render MCP Apps.
 
 |               | Hosted                                                            | Local                                                                       |
 | ------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------- |
@@ -23,20 +23,21 @@ Two ways to connect. The hosted endpoint serves ten tools. The local server serv
 
 ## Tools
 
-| Tool              | What it does                                                          | Spends credits                      |
-| ----------------- | --------------------------------------------------------------------- | ----------------------------------- |
-| `transcribe`      | **The default.** One episode in, its transcript out, a page at a time | **Yes**, about one per audio minute |
-| `search_shows`    | Find shows by name, host, or topic                                    | No                                  |
-| `chart_shows`     | The current chart for a category                                      | No                                  |
-| `list_episodes`   | A show's episodes, newest first                                       | No                                  |
-| `quote`           | Price a selection of many episodes before anything runs               | No                                  |
-| `confirm`         | Turn a quote into a job group                                         | **Yes**, up to the quote's ceiling  |
-| `group_status`    | Where a group's jobs are, and which transcripts are ready             | No                                  |
-| `list_groups`     | Your recent groups                                                    | No                                  |
-| `cancel_group`    | Stop what has not started and release its credits                     | No                                  |
-| `read_transcript` | A job's transcript, a page at a time; waits for a running job         | No                                  |
-| `upload_audio`    | Announce and upload a file from this machine                          | No (local only)                     |
-| `youtube_search`  | Find an episode on YouTube when it has no podcast feed                | No (local only)                     |
+| Tool               | What it does                                                          | Spends credits                      |
+| ------------------ | --------------------------------------------------------------------- | ----------------------------------- |
+| `transcribe`       | **The default.** One episode in, its transcript out, a page at a time | **Yes**, about one per audio minute |
+| `search_shows`     | Find shows by name, host, or topic                                    | No                                  |
+| `chart_shows`      | The current chart for a category                                      | No                                  |
+| `list_episodes`    | A show's episodes, newest first                                       | No                                  |
+| `quote`            | Price a selection of many episodes before anything runs               | No                                  |
+| `confirm`          | Turn a quote into a job group                                         | **Yes**, up to the quote's ceiling  |
+| `group_status`     | Where a group's jobs are, and which transcripts are ready             | No                                  |
+| `list_groups`      | Your recent groups                                                    | No                                  |
+| `cancel_group`     | Stop what has not started and release its credits                     | No                                  |
+| `read_transcript`  | A job's transcript, a page at a time; waits for a running job         | No                                  |
+| `list_transcripts` | Your recent transcripts, with their titles                            | No                                  |
+| `upload_audio`     | Announce and upload a file from this machine                          | No (local only)                     |
+| `youtube_search`   | Find an episode on YouTube when it has no podcast feed                | No (local only)                     |
 
 ### `transcribe`
 
@@ -57,6 +58,26 @@ Pass one episode: an Apple Podcasts link, `feed_url` with `guid`, an `episode_id
 
 For many episodes at once — a chart, a back catalogue — use `quote` and then `confirm`, which
 refuses unless the model restates the quote's total.
+
+## The app
+
+Clients that render [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) — ChatGPT, Claude,
+and others — show results in Audivo's own view instead of only text:
+
+- **`transcribe`** opens a transcript reader: the show and episode, its length, language and cost,
+  then the transcript with timestamps, a search box, and more pages on demand. A job still running
+  shows its progress and fills in when it finishes.
+- **`list_transcripts`** opens your library: recent transcripts to open in the reader, and a search
+  that finds a show, lists its episodes, and transcribes one after you confirm its estimated cost.
+  ChatGPT also puts the library in its sidebar and as a tab beside a conversation.
+
+The app is one self-contained page served as `ui://audivo/app-v1.html`. It loads nothing from any
+domain, so it declares none. Its data travels in each result's `_meta`, which hosts give the app and
+never the model; the model keeps getting the same fenced text as before. Every title and transcript
+line is rendered as text, never as markup. Clients without MCP Apps ignore all of this.
+
+Its source is in `ui/`; `npm run build:ui` bundles it into `src/app-html.ts`, and a test fails when
+the two disagree.
 
 ## Local: run it with `npx`
 

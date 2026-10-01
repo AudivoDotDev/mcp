@@ -150,12 +150,12 @@ describe('the listing', () => {
     }
     expect(annotations('read_transcript')).toMatchObject({ readOnlyHint: true });
     expect(annotations('quote')).toMatchObject({ readOnlyHint: false, destructiveHint: false });
-    // It spends, so it is not read-only; it creates and charges and never
-    // deletes or overwrites, so it is not destructive; the same call returns
+    // It spends, so it is not read-only; spending credits cannot be undone,
+    // so it is destructive, as confirm is (ADR-0036); the same call returns
     // the same job, so it is idempotent.
     expect(annotations('transcribe')).toMatchObject({
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     });
@@ -168,7 +168,7 @@ describe('the listing', () => {
     // `upload_audio` reads a file off the caller's disk and `youtube_search`
     // runs yt-dlp on it; this process has seen neither, and nothing Audivo
     // hosts fetches from YouTube, so the hosted surface offers neither.
-    expect(tools).toHaveLength(10);
+    expect(tools).toHaveLength(11);
     expect(tools.map((tool) => tool.name)).not.toContain('upload_audio');
     expect(tools.map((tool) => tool.name)).not.toContain('youtube_search');
     // And its `transcribe` takes no file path.
@@ -180,7 +180,16 @@ describe('the listing', () => {
 
   it('stays within the token budget', async () => {
     const { handler } = wired();
-    const tools = await listTools(handler);
+    // What a host gives the model: a tool's name, description, schema and
+    // hints. `_meta` and `icons` drive the host's own UI (the app, the
+    // sidebar entry, the status text) and are not counted (ADR-0036).
+    const tools = (await listTools(handler)).map((tool) => ({
+      name: tool.name,
+      title: tool.title,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      annotations: tool.annotations,
+    }));
     const chars = JSON.stringify(tools).length;
     const tokens = estimateTokens(JSON.stringify(tools));
     console.log(`tool surface: ${chars} chars, ~${tokens} tokens of ${TOOL_SURFACE_TOKEN_BUDGET}`);
@@ -405,6 +414,11 @@ describe('what leaves the server', () => {
         tool: 'cancel_group',
         args: { group_id: GROUP_ID },
       },
+      {
+        options: { answers: { listGroups: { status: 500, body: `oops ${CREDENTIAL}` } } },
+        tool: 'list_transcripts',
+        args: {},
+      },
     ];
     const seenTools = new Set<string>();
     for (const { options, tool, args } of cases) {
@@ -478,7 +492,13 @@ describe('what leaves the server', () => {
     expect(text).not.toContain(TOKEN);
   });
 
-  it('names itself', () => {
-    expect(SERVER_INFO).toEqual({ name: 'audivo', version: '0.3.0' });
+  it('names itself, with the icon a host shows for it', () => {
+    expect(SERVER_INFO).toMatchObject({
+      name: 'audivo',
+      title: 'Audivo',
+      version: '0.4.0',
+      websiteUrl: 'https://audivo.dev',
+    });
+    expect(SERVER_INFO.icons[0]?.src).toMatch(/^data:image\/svg\+xml;base64,/);
   });
 });

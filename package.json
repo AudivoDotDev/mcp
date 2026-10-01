@@ -1,6 +1,6 @@
 {
   "name": "@audivo/mcp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Official Audivo MCP server: one call from an episode link to its transcript. Podcast search, episode discovery, transcripts, and on the local server YouTube audio, for Claude, ChatGPT, Codex, Cursor, and any other MCP client.",
   "mcpName": "io.github.AudivoDotDev/mcp",
   "license": "MIT",
@@ -52,7 +52,8 @@
   },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json",
+    "build:ui": "tsx scripts/build-ui.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p ui/tsconfig.json",
     "test": "vitest run",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -66,16 +67,19 @@
     "@modelcontextprotocol/server": "2.0.0",
     "file-type": "^21.3.4",
     "music-metadata": "^11.15.0",
-    "undici": "8.10.0",
+    "undici": "8.11.2",
     "zod": "^4.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/ext-apps": "2.0.3",
     "@types/node": "^24.13.3",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
+    "esbuild": "0.28.2",
     "eslint": "^10.9.1",
+    "happy-dom": "20.14.5",
     "openapi-typescript": "^7.13.0",
     "prettier": "^3.9.6",
     "tsx": "^4.23.12",

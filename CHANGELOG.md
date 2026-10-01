@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.0
+
+- **An app, for clients that render MCP Apps** (ChatGPT, Claude and others): `transcribe` shows a
+  transcript reader — titles, duration, cost, the transcript with timestamps, search within it,
+  more pages on demand — and a new `list_transcripts` tool shows the account's recent transcripts.
+  ChatGPT also offers that library in its sidebar and as a tab beside a conversation. The app is one
+  self-contained page: it loads nothing from any domain, and its data travels in each result's
+  `_meta`, which hosts give the app and never the model. Clients without MCP Apps get the same text
+  as before.
+- **`list_transcripts`**: the account's recent transcripts, newest first, each with its show and
+  episode titles (fenced) and the `job_id` or `read_id` that `read_transcript` takes.
+- `transcribe` is annotated destructive: it spends credits, which cannot be undone.
+- A cache hit's next page is read through `read_transcript` with the read's `read_id`, which spends
+  nothing, instead of by repeating `transcribe`.
+- The hosted server declares that its tools need a signed-in account (OAuth `securitySchemes`), and
+  every tool gives clients short status text while it runs.
+- Results and errors no longer show the model a request id; the app receives it instead.
+- Hosted tool descriptions name only tools the hosted server has.
+- Contract 0.15.0: `show_title` and `episode_title` on jobs, group members and reads, and `read_id`
+  on reads.
+- `undici` 8.11.2, which fixes the high-severity advisories reported against 8.10.0.
+
 ## 0.3.0
 
 - **`transcribe`, the default tool**: one episode in, its transcript out. It makes the API's

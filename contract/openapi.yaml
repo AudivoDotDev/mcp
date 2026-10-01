@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audivo API
-  version: '0.13.0'
+  version: '0.15.0'
   description: >-
     The Audivo API turns a public podcast episode into a clean, timed
     transcript. Name an episode by an Apple Podcasts link, by its RSS feed
@@ -3501,7 +3501,7 @@ components:
     TranscriptRead:
       type: object
       additionalProperties: false
-      required: [format, is_cached, credits_charged]
+      required: [format, is_cached, read_id, credits_charged, show_title, episode_title]
       description: >-
         A synchronous JSON transcript read: a cache hit or publisher
         passthrough (`POST /v1/transcripts`), a direct cached fetch
@@ -3520,8 +3520,18 @@ components:
           const: json
         is_cached:
           type: boolean
+        read_id:
+          $ref: '#/components/schemas/JobId'
+          description: >-
+            The receipt this read was charged under (0.15.0).
+            `GET /v1/reads/{read_id}` delivers the same transcript again, in
+            any format, and charges nothing further.
         credits_charged:
           $ref: '#/components/schemas/CreditAmount'
+        show_title:
+          $ref: '#/components/schemas/JobShowTitle'
+        episode_title:
+          $ref: '#/components/schemas/JobEpisodeTitle'
         transcript:
           $ref: '#/components/schemas/CanonicalTranscript'
         transcript_url:
@@ -3838,10 +3848,43 @@ components:
           anyOf:
             - $ref: '#/components/schemas/EstimatedProcessingSeconds'
             - enum: [null]
+    JobShowTitle:
+      description: >-
+        The show's title as it was when this job or read was created
+        (ADR-0036), or `null` when it was created without one: before
+        0.14.0, or from a feed that names no show. For an upload it is
+        `Uploads`. Copied once, never updated.
+      anyOf:
+        - type: string
+          minLength: 1
+          maxLength: 300
+        - type: 'null'
+    JobEpisodeTitle:
+      description: >-
+        The episode's title as it was when this job or read was created, or
+        `null` when it was created without one. For an upload it is the
+        title given when the file was announced. Where a feed gave no
+        title, a catalog read (`GET /v1/episodes/{episode_id}/transcript`)
+        answers the identifier the catalog stores in its place.
+      anyOf:
+        - type: string
+          minLength: 1
+          maxLength: 300
+        - type: 'null'
     JobStatus:
       type: object
       additionalProperties: false
-      required: [job_id, status, episode_id, estimated_credits, reserved_credits, created_at]
+      required:
+        [
+          job_id,
+          status,
+          episode_id,
+          show_title,
+          episode_title,
+          estimated_credits,
+          reserved_credits,
+          created_at,
+        ]
       description: >-
         Failure/cancellation objects report `reservation_released: true` and
         never imply a cash refund occurred — a cash refund is a separate,
@@ -3853,6 +3896,10 @@ components:
           $ref: '#/components/schemas/JobState'
         episode_id:
           $ref: '#/components/schemas/EpisodeId'
+        show_title:
+          $ref: '#/components/schemas/JobShowTitle'
+        episode_title:
+          $ref: '#/components/schemas/JobEpisodeTitle'
         progress:
           $ref: '#/components/schemas/JobProgress'
         estimated_credits:
@@ -4645,7 +4692,18 @@ components:
     JobGroupJobMember:
       type: object
       additionalProperties: false
-      required: [kind, job_id, episode_id, status, estimated_credits, reserved_credits, created_at]
+      required:
+        [
+          kind,
+          job_id,
+          episode_id,
+          show_title,
+          episode_title,
+          status,
+          estimated_credits,
+          reserved_credits,
+          created_at,
+        ]
       description: >-
         A member with a job behind it. `reserved_credits` is the ceiling the
         confirm reserved; `settled_credits` and `released_credits` appear as
@@ -4658,6 +4716,10 @@ components:
           $ref: '#/components/schemas/JobId'
         episode_id:
           $ref: '#/components/schemas/EpisodeId'
+        show_title:
+          $ref: '#/components/schemas/JobShowTitle'
+        episode_title:
+          $ref: '#/components/schemas/JobEpisodeTitle'
         status:
           $ref: '#/components/schemas/JobState'
         estimated_credits:
@@ -4674,7 +4736,7 @@ components:
     JobGroupCachedReadMember:
       type: object
       additionalProperties: false
-      required: [kind, read_id, episode_id, credits_charged, created_at]
+      required: [kind, read_id, episode_id, show_title, episode_title, credits_charged, created_at]
       description: >-
         A member the confirm found already transcribed: charged
         `credits_charged` (the cached-read price for this account) at
@@ -4692,6 +4754,10 @@ components:
           $ref: '#/components/schemas/JobId'
         episode_id:
           $ref: '#/components/schemas/EpisodeId'
+        show_title:
+          $ref: '#/components/schemas/JobShowTitle'
+        episode_title:
+          $ref: '#/components/schemas/JobEpisodeTitle'
         credits_charged:
           $ref: '#/components/schemas/CreditAmount'
         created_at:
@@ -5707,7 +5773,10 @@ components:
       value:
         format: json
         is_cached: true
+        read_id: job_2c1d4e9fA7bQ3xzM
         credits_charged: 1
+        show_title: The Vergecast
+        episode_title: 'The week in gadgets'
         transcript:
           episode_id: ep_a3urk6fzq2mvbxyc
           show_id: sh_k4n7qzvw2mtxyabc
@@ -5739,7 +5808,10 @@ components:
       value:
         format: json
         is_cached: true
+        read_id: job_7a3c9e1fB2dK8wqR
         credits_charged: 1
+        show_title: The Vergecast
+        episode_title: 'The week in gadgets'
         transcript:
           # `ep_f4tcqk2zmvbxyna7`'s one canonical duration (1834s) — kept off
           # `TerminalFailure`/`EpisodesListPage`'s second
@@ -5858,6 +5930,8 @@ components:
         # (90/113): this job's 180/225 has no shared duration_sec to derive
         # from, so nothing pins it to either.
         episode_id: ep_unzqwwyevfss5jtb
+        show_title: The Vergecast
+        episode_title: 'The week in gadgets'
         estimated_credits: 180
         reserved_credits: 225
         released_credits: 225
@@ -5882,6 +5956,8 @@ components:
         status: transcribing
         # Same episode/job as `FreshJobAccepted`, further along.
         episode_id: ep_hbrpoigf3cbfnobm
+        show_title: The Vergecast
+        episode_title: 'The week in gadgets'
         progress:
           chunks_done: 7
           chunks_total: 13
@@ -5900,6 +5976,8 @@ components:
         # Same dedicated test-mode episode id as `TestModeJobAccepted` — see
         # its comment for why this is not `ep_a3urk6fzq2mvbxyc`.
         episode_id: ep_2o4rak3vrjnvgfyg
+        show_title: The Vergecast
+        episode_title: 'The week in gadgets'
         estimated_credits: 10
         reserved_credits: 13
         # `settle({reservedCredits: 11, measuredSeconds: 60})` in
@@ -5957,6 +6035,8 @@ components:
         job_id: job_test000000000001
         status: completed
         episode_id: ep_2o4rak3vrjnvgfyg
+        show_title: The Vergecast
+        episode_title: 'The week in gadgets'
         estimated_credits: 10
         reserved_credits: 13
         settled_credits: 1
@@ -6140,11 +6220,15 @@ components:
           - kind: cached_read
             read_id: job_2c1d4e9fA7bQ3xzM
             episode_id: ep_rwg4do2imnjyhaj7
+            show_title: The Vergecast
+            episode_title: 'The week in gadgets'
             credits_charged: 1
             created_at: '2026-09-08T09:01:00Z'
           - kind: job
             job_id: job_4e9f2c1dB8cR4yaN
             episode_id: ep_3iicyxg6ymbv75gy
+            show_title: The Vergecast
+            episode_title: 'The week in gadgets'
             status: queued
             estimated_credits: 60
             reserved_credits: 75
@@ -6152,6 +6236,8 @@ components:
           - kind: job
             job_id: job_9f2c1d4eC9dS5zbP
             episode_id: ep_uy4pqvjsmeyrhavz
+            show_title: The Vergecast
+            episode_title: 'The week in gadgets'
             status: queued
             estimated_credits: 45
             reserved_credits: 57
@@ -6184,12 +6270,16 @@ components:
           - kind: cached_read
             read_id: job_2c1d4e9fA7bQ3xzM
             episode_id: ep_rwg4do2imnjyhaj7
+            show_title: The Vergecast
+            episode_title: 'The week in gadgets'
             credits_charged: 1
             created_at: '2026-09-08T09:01:00Z'
           # Settled at its measured 59 minutes: 59 of the 66 reserved, 7 back.
           - kind: job
             job_id: job_4e9f2c1dB8cR4yaN
             episode_id: ep_3iicyxg6ymbv75gy
+            show_title: The Vergecast
+            episode_title: 'The week in gadgets'
             status: completed
             estimated_credits: 60
             reserved_credits: 75
@@ -6199,6 +6289,8 @@ components:
           - kind: job
             job_id: job_9f2c1d4eC9dS5zbP
             episode_id: ep_uy4pqvjsmeyrhavz
+            show_title: The Vergecast
+            episode_title: 'The week in gadgets'
             status: transcribing
             estimated_credits: 45
             reserved_credits: 57
@@ -6231,12 +6323,16 @@ components:
           - kind: cached_read
             read_id: job_2c1d4e9fA7bQ3xzM
             episode_id: ep_rwg4do2imnjyhaj7
+            show_title: The Vergecast
+            episode_title: 'The week in gadgets'
             credits_charged: 1
             created_at: '2026-09-08T09:01:00Z'
           # Was `transcribing` when the cancel arrived: not interrupted.
           - kind: job
             job_id: job_4e9f2c1dB8cR4yaN
             episode_id: ep_3iicyxg6ymbv75gy
+            show_title: The Vergecast
+            episode_title: 'The week in gadgets'
             status: transcribing
             estimated_credits: 60
             reserved_credits: 75
@@ -6245,6 +6341,8 @@ components:
           - kind: job
             job_id: job_9f2c1d4eC9dS5zbP
             episode_id: ep_uy4pqvjsmeyrhavz
+            show_title: The Vergecast
+            episode_title: 'The week in gadgets'
             status: cancelled
             estimated_credits: 45
             reserved_credits: 57

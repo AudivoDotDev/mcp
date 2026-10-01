@@ -106,6 +106,7 @@ describe('serve', () => {
         'list_groups',
         'quote',
         'read_transcript',
+        'list_transcripts',
         'search_shows',
         'transcribe',
         // Only here: the hosted server has no disk to read a file from, and

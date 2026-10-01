@@ -215,6 +215,8 @@ export const GROUP: Schemas['JobGroupResponse'] = {
       kind: 'job',
       job_id: JOB_ID,
       episode_id: EPISODE_ID,
+      show_title: 'The Test Show',
+      episode_title: 'Episode one',
       status: 'completed',
       estimated_credits: 120,
       reserved_credits: 132,
@@ -226,6 +228,8 @@ export const GROUP: Schemas['JobGroupResponse'] = {
       kind: 'job',
       job_id: JOB_ID_2,
       episode_id: EPISODE_ID_2,
+      show_title: 'The Test Show',
+      episode_title: 'Episode two',
       status: 'queued',
       estimated_credits: 60,
       reserved_credits: 66,
@@ -235,6 +239,8 @@ export const GROUP: Schemas['JobGroupResponse'] = {
       kind: 'cached_read',
       read_id: READ_ID,
       episode_id: EPISODE_ID_2,
+      show_title: 'The Test Show',
+      episode_title: 'Episode two',
       credits_charged: 18,
       created_at: NOW,
     },
@@ -308,6 +314,8 @@ export function jobStatus(overrides: Partial<Schemas['JobStatus']> = {}): Schema
     job_id: JOB_ID,
     status: 'completed',
     episode_id: EPISODE_ID,
+    show_title: 'The Test Show',
+    episode_title: 'Episode one',
     estimated_credits: 120,
     reserved_credits: 132,
     settled_credits: 118,
@@ -347,7 +355,10 @@ export function transcriptRead(
   return {
     format: 'json',
     is_cached: true,
+    read_id: READ_ID,
     credits_charged: 0,
+    show_title: 'The Test Show',
+    episode_title: 'Episode two',
     transcript: transcript({ episode_id: EPISODE_ID_2 }),
     ...overrides,
   };
@@ -392,6 +403,8 @@ export type FakeApiOptions = {
   readonly quote?: Schemas['QuoteResponse'];
   readonly upload?: Schemas['UploadCreated'];
   readonly group?: Schemas['JobGroupResponse'];
+  /** By group id, for `GET /v1/groups/{group_id}`; an unnamed group falls back to `group`. */
+  readonly groupsById?: Readonly<Record<string, Schemas['JobGroupResponse'] | FakeResponse>>;
   readonly groups?: Schemas['JobGroupsListResponse'];
   /**
    * By job id; a job not named here is `404 job_not_found`. An array is a
@@ -542,7 +555,16 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
         }
         return json(200, options.group ?? GROUP);
       }
-      case 'getGroup':
+      case 'getGroup': {
+        const named = options.groupsById?.[pathParam ?? ''];
+        if (named !== undefined && 'status' in named && typeof named.status === 'number') {
+          return named as FakeResponse;
+        }
+        return json(
+          200,
+          (named as Schemas['JobGroupResponse'] | undefined) ?? options.group ?? GROUP,
+        );
+      }
       case 'cancelGroup':
         return json(200, options.group ?? GROUP);
       case 'listGroups':

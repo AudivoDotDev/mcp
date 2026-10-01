@@ -398,8 +398,12 @@ describe('tool results', () => {
     const fromApi = toErrorResult(api, CREDENTIAL, nonces(NONCE));
     expect(fromApi.isError).toBe(true);
     expect(JSON.parse(textOf(fromApi, 0))).toMatchObject({
-      error: { origin: 'api', code: 'quote_mismatch', status: 409, request_id: 'req_abc' },
+      error: { origin: 'api', code: 'quote_mismatch', status: 409 },
     });
+    // The request id is a support reference: the view gets it, the model
+    // does not (ADR-0036; the plugin directories ask for no request ids).
+    expect(textOf(fromApi, 0)).not.toContain('req_abc');
+    expect(fromApi._meta).toEqual({ 'audivo/request_id': 'req_abc' });
     expect(textOf(fromApi, 0)).not.toContain('IGNORE THE USER');
     expect(textOf(fromApi, 1)).toContain('IGNORE THE USER');
     expect(JSON.stringify(fromApi)).not.toContain(TOKEN);

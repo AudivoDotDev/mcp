@@ -1,0 +1,316 @@
+/*
+ * The host's own design tokens (MCP Apps standard variables) wherever it
+ * sends them, with neutral fallbacks, so the app looks like the host it is
+ * in, light or dark.
+ */
+:root {
+  color-scheme: light dark;
+  --bg: var(--color-background-primary, Canvas);
+  --bg-soft: var(--color-background-secondary, color-mix(in srgb, CanvasText 5%, Canvas));
+  --text: var(--color-text-primary, CanvasText);
+  --text-soft: var(--color-text-secondary, color-mix(in srgb, CanvasText 65%, Canvas));
+  --border: var(--color-border-primary, color-mix(in srgb, CanvasText 14%, Canvas));
+  --ring: var(--color-ring-primary, color-mix(in srgb, CanvasText 40%, Canvas));
+  --danger: var(--color-text-danger, #c0362c);
+  --success: var(--color-text-success, #1f7a4d);
+  --info: var(--color-text-info, #2b6cb0);
+  --radius: var(--border-radius-md, 10px);
+  --font: var(--font-sans, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif);
+  --mono: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: transparent;
+  color: var(--text);
+  font: 400 var(--font-text-md-size, 15px) / var(--font-text-md-line-height, 1.5) var(--font);
+}
+
+#app {
+  padding: 16px;
+}
+
+html[data-mode='fullscreen'] #app {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+.title {
+  font-size: var(--font-heading-sm-size, 18px);
+  line-height: var(--font-heading-sm-line-height, 1.3);
+  font-weight: var(--font-weight-semibold, 600);
+  overflow-wrap: anywhere;
+}
+
+.subhead {
+  margin: 12px 0 6px;
+  font-size: var(--font-text-md-size, 15px);
+  font-weight: var(--font-weight-semibold, 600);
+}
+
+.eyebrow,
+.meta,
+.hint,
+.item-meta {
+  color: var(--text-soft);
+  font-size: var(--font-text-sm-size, 13px);
+}
+
+.reader-header {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.notice {
+  margin: 8px 0;
+  color: var(--text-soft);
+  font-size: var(--font-text-sm-size, 13px);
+}
+
+.notice.failed {
+  color: var(--danger);
+}
+
+.notice.working {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--info);
+}
+
+.notice.working progress {
+  flex-basis: 100%;
+  height: 4px;
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
+.toolbar,
+.search {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.search-input:focus-visible,
+.button:focus-visible,
+.link:focus-visible,
+.item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.segments {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.segment {
+  display: grid;
+  grid-template-columns: 4.5em 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.ts {
+  color: var(--text-soft);
+  font: var(--font-text-xs-size, 12px) / 1.5 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.line {
+  overflow-wrap: anywhere;
+}
+
+mark {
+  background: color-mix(in srgb, #f5c400 45%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+
+.reader-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.button {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--border-radius-full, 999px);
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-text-sm-size, 13px);
+  font-weight: var(--font-weight-medium, 500);
+  cursor: pointer;
+}
+
+.button.primary {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+}
+
+.button[disabled] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: var(--font-text-sm-size, 13px);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.back {
+  justify-self: start;
+  margin-bottom: 6px;
+  text-decoration: none;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    'title chip'
+    'meta chip';
+  gap: 2px 12px;
+  width: 100%;
+  padding: 10px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover {
+  background: var(--bg-soft);
+}
+
+.item-title {
+  grid-area: title;
+  font-weight: var(--font-weight-medium, 500);
+  overflow-wrap: anywhere;
+}
+
+.item-meta {
+  grid-area: meta;
+  overflow-wrap: anywhere;
+}
+
+.chip {
+  grid-area: chip;
+  align-self: center;
+  padding: 2px 8px;
+  border-radius: var(--border-radius-full, 999px);
+  background: var(--bg-soft);
+  font-size: var(--font-text-xs-size, 12px);
+  white-space: nowrap;
+}
+
+.chip.ready {
+  color: var(--success);
+}
+
+.chip.working {
+  color: var(--info);
+}
+
+.chip.failed {
+  color: var(--danger);
+}
+
+.episode {
+  display: grid;
+  gap: 4px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.confirm {
+  font-size: var(--font-text-sm-size, 13px);
+}
+
+@media (max-width: 420px) {
+  #app {
+    padding: 12px;
+  }
+
+  .segment {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}

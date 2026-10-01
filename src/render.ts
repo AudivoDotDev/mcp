@@ -41,6 +41,7 @@ import type {
   UploadCreated,
 } from './api-client.js';
 import { scrub, type McpToolError } from './errors.js';
+import { VIEW_META_KEY, type View } from './view.js';
 
 // --- The fence -----------------------------------------------------------------
 
@@ -373,6 +374,12 @@ export type Document = {
   readonly trusted: Record<string, unknown>;
   /** Everything provider-authored, ready to fence; empty when there is nothing of the kind. */
   readonly untrusted: string;
+  /**
+   * What the app's view is handed (ADR-0036), in the result's `_meta`: hosts
+   * give it to the view and never to the model, so it can carry publisher
+   * text unfenced. Absent for a result no view reads.
+   */
+  readonly view?: View;
 };
 
 function present<T>(value: T | undefined): T | undefined {
@@ -621,7 +628,6 @@ export function statusFacts(status: JobStatus): Record<string, unknown> {
             code: status.error.code,
             type: status.error.type,
             retryable: status.error.retryable,
-            request_id: status.error.request_id,
           },
   };
 }
@@ -957,8 +963,9 @@ export function renderGroup(
  * that to a model would be feeding it unfenced.
  */
 export function toToolResult(doc: Document, nonce: Nonce): CallToolResult {
+  const meta = doc.view === undefined ? {} : { _meta: { [VIEW_META_KEY]: doc.view } };
   if (doc.untrusted === '') {
-    return { content: [{ type: 'text', text: JSON.stringify(doc.trusted, null, 2) }] };
+    return { content: [{ type: 'text', text: JSON.stringify(doc.trusted, null, 2) }], ...meta };
   }
   const fenced = fence(doc.untrusted, nonce);
   const trusted = {
@@ -975,6 +982,7 @@ export function toToolResult(doc: Document, nonce: Nonce): CallToolResult {
       { type: 'text', text: JSON.stringify(trusted, null, 2) },
       { type: 'text', text: fenced.block },
     ],
+    ...meta,
   };
 }
 
@@ -990,18 +998,24 @@ export function toErrorResult(
   nonce: Nonce,
 ): CallToolResult {
   const message = scrub(error.message, credential);
+  // No request id for the model: it is a support reference, not something
+  // a model can act on, and the plugin directories ask for none in results.
+  // The view gets it, where a person can quote it.
   const detail: Record<string, unknown> = {
     origin: error.origin,
     code: error.code,
     type: error.type,
     retryable: error.retryable,
     status: error.status,
-    request_id: error.requestId,
     doc_url: error.docUrl,
   };
   const doc: Document =
     error.origin === 'api'
       ? { trusted: { error: detail }, untrusted: `error message\n  message: ${message}` }
       : { trusted: { error: { ...detail, message } }, untrusted: '' };
-  return { ...toToolResult(doc, nonce), isError: true };
+  return {
+    ...toToolResult(doc, nonce),
+    ...(error.requestId === null ? {} : { _meta: { 'audivo/request_id': error.requestId } }),
+    isError: true,
+  };
 }

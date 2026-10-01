@@ -1086,7 +1086,11 @@ export interface components {
       /** @constant */
       format: 'json';
       is_cached: boolean;
+      /** @description The receipt this read was charged under (0.15.0). `GET /v1/reads/{read_id}` delivers the same transcript again, in any format, and charges nothing further. */
+      read_id: components['schemas']['JobId'];
       credits_charged: components['schemas']['CreditAmount'];
+      show_title: components['schemas']['JobShowTitle'];
+      episode_title: components['schemas']['JobEpisodeTitle'];
       transcript?: components['schemas']['CanonicalTranscript'];
       /** Format: uri */
       transcript_url?: string;
@@ -1211,11 +1215,17 @@ export interface components {
       /** @description Estimated wall-clock seconds remaining until this job reaches a terminal state, or `null` if not yet computable. Same quantity and same bound as `estimated_seconds`, measured later in the job's life — so it shares `EstimatedProcessingSeconds` rather than carrying its own copy of the audio-duration ceiling. */
       eta_seconds: components['schemas']['EstimatedProcessingSeconds'] | null;
     };
+    /** @description The show's title as it was when this job or read was created (ADR-0036), or `null` when it was created without one: before 0.14.0, or from a feed that names no show. For an upload it is `Uploads`. Copied once, never updated. */
+    JobShowTitle: string | null;
+    /** @description The episode's title as it was when this job or read was created, or `null` when it was created without one. For an upload it is the title given when the file was announced. Where a feed gave no title, a catalog read (`GET /v1/episodes/{episode_id}/transcript`) answers the identifier the catalog stores in its place. */
+    JobEpisodeTitle: string | null;
     /** @description Failure/cancellation objects report `reservation_released: true` and never imply a cash refund occurred — a cash refund is a separate, explicit Stripe refund via `POST /v1/billing/refund`. */
     JobStatus: {
       job_id: components['schemas']['JobId'];
       status: components['schemas']['JobState'];
       episode_id: components['schemas']['EpisodeId'];
+      show_title: components['schemas']['JobShowTitle'];
+      episode_title: components['schemas']['JobEpisodeTitle'];
       progress?: components['schemas']['JobProgress'];
       estimated_credits: components['schemas']['CreditAmount'];
       reserved_credits: components['schemas']['CreditAmount'];
@@ -1511,6 +1521,8 @@ export interface components {
       kind: 'job';
       job_id: components['schemas']['JobId'];
       episode_id: components['schemas']['EpisodeId'];
+      show_title: components['schemas']['JobShowTitle'];
+      episode_title: components['schemas']['JobEpisodeTitle'];
       status: components['schemas']['JobState'];
       estimated_credits: components['schemas']['CreditAmount'];
       reserved_credits: components['schemas']['CreditAmount'];
@@ -1525,6 +1537,8 @@ export interface components {
       kind: 'cached_read';
       read_id: components['schemas']['JobId'];
       episode_id: components['schemas']['EpisodeId'];
+      show_title: components['schemas']['JobShowTitle'];
+      episode_title: components['schemas']['JobEpisodeTitle'];
       credits_charged: components['schemas']['CreditAmount'];
       /** Format: date-time */
       created_at: string;

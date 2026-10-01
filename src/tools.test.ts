@@ -99,6 +99,7 @@ const MINIMAL_ARGS: Readonly<Record<string, unknown>> = {
   cancel_group: { group_id: GROUP_ID },
   read_transcript: { job_id: JOB_ID },
   transcribe: { url: 'https://podcasts.apple.com/us/podcast/x/id123?i=456' },
+  list_transcripts: {},
 };
 
 describe('every tool', () => {

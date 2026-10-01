@@ -25,6 +25,7 @@ import {
   type CallToolResult,
 } from '@modelcontextprotocol/server';
 import type { ApiClient, TraceEntry } from './api-client.js';
+import { APP_ICON, needsSignIn, registerApp } from './app.js';
 import { INTERNAL_ERROR_MESSAGE, McpToolError, errorName, localError, scrub } from './errors.js';
 import { randomNonce, toErrorResult, toToolResult, type Nonce } from './render.js';
 import { TOOLS, type AnyToolDefinition, type ToolContext } from './tools.js';
@@ -49,9 +50,21 @@ export type McpDeps = {
    * Local only: see `ToolContext.progress`.
    */
   readonly progress?: boolean;
+  /**
+   * Which server this is. The hosted one declares that its tools need a
+   * signed-in account (ADR-0035); the local one is signed in by its
+   * environment's key and declares nothing. Hosted unless the CLI says so.
+   */
+  readonly surface?: 'hosted' | 'local';
 };
 
-export const SERVER_INFO = { name: 'audivo', version: '0.3.0' } as const;
+export const SERVER_INFO = {
+  name: 'audivo',
+  title: 'Audivo',
+  version: '0.4.0',
+  websiteUrl: 'https://audivo.dev',
+  icons: [APP_ICON],
+} as const;
 
 /**
  * What every client is told about this server before its first call: the one
@@ -206,8 +219,13 @@ export function createMcpServer(
   credential: string | null,
   tools: readonly AnyToolDefinition[] = TOOLS,
 ): McpServer {
-  const server = new McpServer(SERVER_INFO, { instructions: SERVER_INSTRUCTIONS });
+  const server = new McpServer(
+    { ...SERVER_INFO, icons: [APP_ICON] },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
+  const hosted = (deps.surface ?? 'hosted') === 'hosted';
   for (const tool of tools) {
+    const meta = { ...tool.meta, ...(hosted ? needsSignIn() : {}) };
     server.registerTool(
       tool.name,
       {
@@ -215,10 +233,14 @@ export function createMcpServer(
         description: tool.description,
         inputSchema: tool.inputSchema,
         annotations: tool.annotations,
+        ...(Object.keys(meta).length === 0 ? {} : { _meta: meta }),
+        ...(tool.icons === undefined ? {} : { icons: [...tool.icons] }),
       },
       (args, request) => runTool(tool, args, deps, credential, request as RequestSeam | undefined),
     );
   }
+  // The app every surface serves (ADR-0036); a client without MCP Apps never reads it.
+  registerApp(server);
   return server;
 }
 

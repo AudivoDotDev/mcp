@@ -27,6 +27,7 @@ import {
   FEED_URL,
   GROUP_ID,
   JOB_ID,
+  READ_ID,
   TOKEN,
   UPLOAD_ID,
   errorEnvelope,
@@ -223,16 +224,38 @@ describe('transcribe: an episode already transcribed', () => {
     expect(doc.trusted).toMatchObject({ is_cached: true, credits_charged: 8 });
     expect(view.page).toMatchObject({ complete: false });
     expect(view.page.chars).toBeLessThanOrEqual(TRANSCRIPT_PAGE_CHARS);
-    // The same call, turned to the next page: same episode, same cap, so the
-    // same idempotency key, which the API answers as a replay.
-    expect(view.next_page.tool).toBe('transcribe');
-    expect(view.next_page.arguments).toMatchObject({ episode_id: EPISODE_ID, max_credits: 20 });
-    const again = await run(view.next_page.arguments);
-    const keys = api.callsTo('createTranscript').map((call) => call.headers['idempotency-key']);
+    // The rest is read through the receipt it was charged under (0.15.0):
+    // read_transcript, which spends nothing, rather than a replay of this.
+    expect(doc.trusted.read_id).toBe(READ_ID);
+    expect(view.next_page).toEqual({
+      tool: 'read_transcript',
+      arguments: { read_id: READ_ID, page_start: expect.any(Number) },
+    });
+
+    // An API that names no receipt (before 0.15.0) still pages: the same
+    // call, turned to the next page, under the same idempotency key, which
+    // the API answers as a replay.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- dropped on purpose
+    const { read_id: _dropped, ...unnamed } = transcriptRead({
+      credits_charged: 8,
+      transcript: long,
+    });
+    const older = harness({ created: json(200, unnamed) });
+    const first = await older.run({ episode_id: EPISODE_ID, max_credits: 20 });
+    const olderView = first.trusted.transcript as View;
+    expect(olderView.next_page.tool).toBe('transcribe');
+    expect(olderView.next_page.arguments).toMatchObject({
+      episode_id: EPISODE_ID,
+      max_credits: 20,
+    });
+    const again = await older.run(olderView.next_page.arguments);
+    const keys = older.api
+      .callsTo('createTranscript')
+      .map((call) => call.headers['idempotency-key']);
     expect(keys).toHaveLength(2);
     expect(keys[0]).toBe(keys[1]);
     expect(again.trusted.transcript).toMatchObject({
-      page: { page_start: view.next_page.arguments.page_start },
+      page: { page_start: olderView.next_page.arguments.page_start },
     });
   });
 });

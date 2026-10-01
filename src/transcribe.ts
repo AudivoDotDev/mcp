@@ -53,6 +53,7 @@ import {
   type AnyToolDefinition,
   type ToolContext,
 } from './tool-kit.js';
+import { acceptedView, jobView, readView, rendersApp, statusText } from './app.js';
 import { youtubeVideoId } from './youtube-url.js';
 
 // --- Waiting on a job ------------------------------------------------------------------
@@ -333,11 +334,16 @@ export function transcribeTool(local?: LocalSources): AnyToolDefinition {
     inputSchema: inputSchema(local !== undefined),
     annotations: {
       readOnlyHint: false,
-      // Additive: it creates one job and charges for it. Nothing is deleted
-      // or overwritten, which is what the hint is about.
-      destructiveHint: false,
+      // It spends credits, which cannot be taken back: the irreversible
+      // transaction the hint exists for, as `confirm` already says (ADR-0036).
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
+    },
+    // The reader renders the result (ADR-0036).
+    meta: {
+      ...rendersApp(),
+      ...statusText('Transcribing the episode…', 'Transcribed the episode'),
     },
     handler: async (args: TranscribeArgs, ctx) => {
       const call = requireCredential(ctx);
@@ -372,18 +378,35 @@ export function transcribeTool(local?: LocalSources): AnyToolDefinition {
           repeat_is_free:
             'the same call within 24 hours replays this answer and charges nothing further',
         };
+        // The receipt the read was charged under (contract 0.15.0): the rest
+        // is read through read_transcript, which charges nothing and spends
+        // nothing, rather than by replaying this call.
+        const readId = 'read_id' in read ? read.read_id : undefined;
+        if (readId !== undefined) trusted.read_id = readId;
+        const view = readView(read, { pageStart, budgetChars: TRANSCRIPT_PAGE_CHARS });
+        const withView = view === undefined ? {} : { view };
         if (!('transcript' in read) || read.transcript === undefined) {
           trusted.transcript = { delivery: 'by_reference', reason: 'above_inline_limit' };
-          return { trusted, untrusted: '' } satisfies Document;
+          return { trusted, untrusted: '', ...withView } satisfies Document;
         }
         const page = transcriptPage(read.transcript, {
           pageStart,
           budgetChars: TRANSCRIPT_PAGE_CHARS,
           label: `episode ${read.transcript.episode_id}`,
-          continueWith: repeatWith,
+          continueWith:
+            readId === undefined
+              ? repeatWith
+              : (next) => ({
+                  tool: 'read_transcript',
+                  arguments: { read_id: readId, page_start: next },
+                }),
         });
         trusted.transcript = page.facts;
-        return { trusted, untrusted: untrustedBlock(page.rows, page.text) } satisfies Document;
+        return {
+          trusted,
+          untrusted: untrustedBlock(page.rows, page.text),
+          ...withView,
+        } satisfies Document;
       }
 
       const accepted: TranscriptJobAccepted = created.body;
@@ -416,14 +439,22 @@ export function transcribeTool(local?: LocalSources): AnyToolDefinition {
             },
           },
           untrusted: '',
+          view: acceptedView(accepted),
         } satisfies Document;
       }
-      return deliverJobPage(latest, {
-        reference: referenceFor(ctx.api.transcriptReference(accepted.job_id)),
-        pageStart,
-        budgetChars: TRANSCRIPT_PAGE_CHARS,
-        extra,
-      });
+      return {
+        ...deliverJobPage(latest, {
+          reference: referenceFor(ctx.api.transcriptReference(accepted.job_id)),
+          pageStart,
+          budgetChars: TRANSCRIPT_PAGE_CHARS,
+          extra,
+        }),
+        view: jobView(latest, {
+          pageStart,
+          budgetChars: TRANSCRIPT_PAGE_CHARS,
+          jobId: accepted.job_id,
+        }),
+      };
     },
   });
 }
