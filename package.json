@@ -59,6 +59,7 @@
     "format:check": "prettier --check .",
     "contract:sync": "node --import tsx scripts/contract-sync.ts",
     "contract:types": "openapi-typescript contract/openapi.yaml -o src/contract/types.ts && prettier --write src/contract/types.ts",
+    "dev:server": "tsx scripts/dev-server.ts",
     "prepublishOnly": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run build"
   },
   "dependencies": {

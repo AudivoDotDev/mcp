@@ -227,6 +227,28 @@ types. Run it locally against a key with:
 AUDIVO_API_KEY=hk_live_... node dist/bin.js
 ```
 
+### Live reload in your MCP client
+
+`npm run dev:server` runs `src/` through tsx behind a small proxy that restarts the server on every
+save, replays the client's handshake into the new process, and sends `tools/list_changed`. A
+connected client uses your latest code with no build and no reconnect. A save that breaks startup
+answers calls with an error, the details go to the client's MCP log, and the next save recovers. A
+call still running when you save is sent again to the new code, except one that uploads audio (a
+file or YouTube `transcribe`, or `upload_audio`): sent twice, that could be transcribed and charged
+twice, so it finishes on the old code first.
+
+To use it in Claude Code for this repository only, taking precedence over a user-wide `audivo`
+server:
+
+```bash
+claude mcp add audivo -s local -e AUDIVO_API_KEY=hk_live_... \
+  -- "$PWD/node_modules/.bin/tsx" "$PWD/scripts/dev-server.ts"
+```
+
+The absolute `tsx` path lets the client start it from any directory. A bare `npx -y @audivo/mcp` does
+not work inside this repository — npm takes the checkout to be the package and finds no linked
+`audivo-mcp` bin — which is one reason the configs above say `@latest`.
+
 ## Releasing
 
 Bump `version` in `package.json`, both version fields in `server.json`, and `SERVER_INFO` in
