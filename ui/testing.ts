@@ -9,7 +9,7 @@ export function fakeHost(
   options: { readonly inline?: boolean; readonly canExpand?: boolean } = {},
 ) {
   const calls: Call[] = [];
-  const notes: string[] = [];
+  const notes: { text: string; title: string }[] = [];
   let expands = 0;
   const host: Host = {
     async callTool(name, args) {
@@ -21,8 +21,8 @@ export function fakeHost(
       expands += 1;
       return options.canExpand === true;
     },
-    noteOpened(text) {
-      notes.push(text);
+    noteOpened(text, title) {
+      notes.push({ text, title });
     },
     locale: 'en-US',
     inline: options.inline ?? true,

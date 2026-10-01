@@ -87,8 +87,14 @@ export type Host = {
   callTool(name: string, args: Record<string, unknown>): Promise<Outcome>;
   /** Ask to go fullscreen; false when the host cannot. */
   expand(): Promise<boolean>;
-  /** Tell the conversation, by id only, what the user has open. */
-  noteOpened(text: string): void;
+  /**
+   * Attach what the user has open to the conversation. ChatGPT shows it as a
+   * removable chip in the composer: `title` is the chip's label, for the
+   * person only (block `_meta` never reaches the model); `text` is what the
+   * model reads, and names the transcript by id alone, because a title is
+   * publisher text and reaches a model only fenced.
+   */
+  noteOpened(text: string, title: string): void;
   readonly locale: string | undefined;
   readonly inline: boolean;
 };

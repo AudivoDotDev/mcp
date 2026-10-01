@@ -496,7 +496,7 @@ describe('what leaves the server', () => {
     expect(SERVER_INFO).toMatchObject({
       name: 'audivo',
       title: 'Audivo',
-      version: '0.4.0',
+      version: '0.4.1',
       websiteUrl: 'https://audivo.dev',
     });
     expect(SERVER_INFO.icons[0]?.src).toMatch(/^data:image\/svg\+xml;base64,/);

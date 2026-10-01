@@ -192,7 +192,7 @@ mark {
   font: inherit;
   font-size: var(--font-text-sm-size, 13px);
   font-weight: var(--font-weight-medium, 500);
-  cursor: pointer;
+  cursor: var(--cursor-interaction, pointer);
 }
 
 .button.primary {
@@ -214,7 +214,7 @@ mark {
   font: inherit;
   font-size: var(--font-text-sm-size, 13px);
   text-decoration: underline;
-  cursor: pointer;
+  cursor: var(--cursor-interaction, pointer);
 }
 
 .back {
@@ -245,7 +245,7 @@ mark {
   color: inherit;
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: var(--cursor-interaction, pointer);
 }
 
 .item:hover {

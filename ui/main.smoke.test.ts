@@ -48,6 +48,7 @@ describe('the app in a host', () => {
               displayMode: 'fullscreen',
               availableDisplayModes: ['inline', 'fullscreen'],
               locale: 'en-US',
+              'openai/interactionCursor': 'default',
               toolInfo: { tool: { name: 'transcribe', inputSchema: { type: 'object' } } },
             },
           },
@@ -82,6 +83,8 @@ describe('the app in a host', () => {
     expect(sent.map((m) => m.method)).toContain('ui/initialize');
     expect(sent.map((m) => m.method)).toContain('ui/notifications/initialized');
     expect(document.documentElement.dataset.mode).toBe('fullscreen');
+    // The person's cursor preference in ChatGPT Desktop.
+    expect(document.documentElement.style.getPropertyValue('--cursor-interaction')).toBe('default');
 
     // The first render comes from the tool result, not from a second call.
     deliver({
@@ -111,5 +114,40 @@ describe('the app in a host', () => {
       }),
     ]);
     expect(document.querySelectorAll('.segment')).toHaveLength(15);
+
+    // From the library, opening a transcript attaches it to the conversation:
+    // a chip labelled for the person, text with ids alone for the model.
+    deliver({
+      jsonrpc: '2.0',
+      method: 'ui/notifications/tool-result',
+      params: {
+        content: [{ type: 'text', text: '{}' }],
+        _meta: {
+          'audivo/view': {
+            kind: 'library',
+            next_cursor: null,
+            items: [
+              {
+                ref: { job_id: 'job_abcdefghijklmnop' },
+                episode_id: 'ep_abcdefghijklmnop',
+                show_title: 'Hard Fork',
+                episode_title: 'An episode about AI',
+                status: 'completed',
+                created_at: '2026-09-30T10:00:00Z',
+                credits: 52,
+              },
+            ],
+          },
+        },
+      },
+    });
+    await settle();
+    (document.querySelector('button.item') as HTMLButtonElement).click();
+    for (let i = 0; i < 5; i += 1) await settle();
+    const attached = sent.find((m) => m.method === 'ui/update-model-context');
+    const block = (attached?.params?.content as Record<string, unknown>[] | undefined)?.[0];
+    expect(block?._meta).toEqual({ 'openai/title': 'Hard Fork: An episode about AI' });
+    expect(String(block?.text)).toContain('job_id job_abcdefghijklmnop');
+    expect(String(block?.text)).not.toContain('Hard Fork');
   });
 });

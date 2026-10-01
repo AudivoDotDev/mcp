@@ -28,6 +28,17 @@ export type ReaderOptions = {
   readonly sleep?: (ms: number) => Promise<void>;
 };
 
+/** The composer chip's label: the episode, with its show when there is room. */
+export function chipLabel(show: string | null, episode: string | null): string {
+  const label =
+    episode === null
+      ? (show ?? 'Audivo transcript')
+      : show === null
+        ? episode
+        : `${show}: ${episode}`;
+  return label.length > 120 ? `${label.slice(0, 119)}…` : label;
+}
+
 export type MountedReader = {
   /** The host changed how the app is shown; fullscreen shows every loaded line. */
   displayModeChanged(inline: boolean): void;
@@ -60,7 +71,9 @@ export function mountReader(
   if (options.announce === true) {
     const id = 'job_id' in view.ref ? `job_id ${view.ref.job_id}` : `read_id ${view.ref.read_id}`;
     host.noteOpened(
-      `The user opened a transcript in the Audivo app (${id}); read_transcript with that id reads it.`,
+      `The user attached an Audivo transcript (${id}). Read it with read_transcript and that id ` +
+        'before answering about it.',
+      chipLabel(view.show_title, view.episode_title),
     );
   }
 

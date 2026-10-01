@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.1
+
+Checked against OpenAI's MCP extensions specification and SDK source:
+
+- Opening a transcript from the library attaches it to the ChatGPT composer as a chip labelled with
+  the show and episode (`openai/title`, which ChatGPT keeps out of model input). The text the model
+  reads names the transcript by id alone, so publisher titles still reach a model only fenced.
+- Deep links in the older `{ path, query }` form open the transcript they name, as OpenAI's SDK
+  accepts them.
+- Tools that render the app also carry the flat `ui/resourceUri` key, which the MCP Apps standard's
+  own helper writes for older hosts.
+- Controls follow ChatGPT Desktop's cursor preference (`openai/interactionCursor`).
+
 ## 0.4.0
 
 - **An app, for clients that render MCP Apps** (ChatGPT, Claude and others): `transcribe` shows a

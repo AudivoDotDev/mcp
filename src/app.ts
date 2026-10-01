@@ -72,6 +72,9 @@ export const APP_ICON: Icon = {
 export function rendersApp(): Record<string, unknown> {
   return {
     ui: { resourceUri: APP_URI },
+    // The flat key older MCP Apps hosts read, which the standard's own
+    // `registerAppTool` still writes beside `ui.resourceUri`.
+    'ui/resourceUri': APP_URI,
     // ChatGPT's own key for the same thing, read by older integrations.
     'openai/outputTemplate': APP_URI,
   };

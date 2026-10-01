@@ -97,6 +97,27 @@ export function isSettled(status: string): boolean {
 }
 
 /**
+ * The app-relative URL a deep link carries. Current hosts send `{ url }`;
+ * older ones send `{ path: string[], query: [key, value][] }`, which
+ * OpenAI's own SDK still accepts, so this does too.
+ */
+export function deepLinkUrl(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  if ('url' in value && typeof value.url === 'string') return value.url;
+  if (!('path' in value) || !Array.isArray(value.path)) return undefined;
+  if (!value.path.every((part: unknown) => typeof part === 'string')) return undefined;
+  const query =
+    'query' in value && Array.isArray(value.query)
+      ? value.query.filter(
+          (pair: unknown): pair is [string, string] =>
+            Array.isArray(pair) && pair.length === 2 && pair.every((p) => typeof p === 'string'),
+        )
+      : [];
+  const search = new URLSearchParams(query).toString();
+  return `/${(value.path as string[]).map(encodeURIComponent).join('/')}${search === '' ? '' : `?${search}`}`;
+}
+
+/**
  * A deep link's app-relative path (`/jobs/job_…` or `/reads/job_…`) as the
  * transcript it names, or `undefined` for anything else.
  */

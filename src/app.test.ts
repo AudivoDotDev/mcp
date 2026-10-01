@@ -93,6 +93,8 @@ describe('which tools render the app', () => {
     );
     expect(rendering.map((tool) => tool.name).sort()).toEqual(['list_transcripts', 'transcribe']);
     for (const tool of rendering) {
+      // The standard key, the flat one older hosts read, and ChatGPT's alias.
+      expect(tool._meta?.['ui/resourceUri']).toBe(APP_URI);
       expect(tool._meta?.['openai/outputTemplate']).toBe(APP_URI);
     }
   });

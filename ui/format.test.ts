@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   clock,
+  deepLinkUrl,
   creditsLine,
   duration,
   isSettled,
@@ -47,6 +48,16 @@ describe('the app’s wording', () => {
     expect(statusLabel('transcribing').tone).toBe('working');
     expect(isSettled('completed')).toBe(true);
     expect(isSettled('queued')).toBe(false);
+  });
+
+  it('reads a deep link in the form current hosts send and in the older one', () => {
+    expect(deepLinkUrl({ url: '/jobs/job_abcdefghijklmnop' })).toBe('/jobs/job_abcdefghijklmnop');
+    expect(deepLinkUrl({ path: ['reads', 'job_abcdefghijklmnop'], query: [] })).toBe(
+      '/reads/job_abcdefghijklmnop',
+    );
+    expect(deepLinkUrl({ path: ['parts'], query: [['tag', 'a b']] })).toBe('/parts?tag=a+b');
+    expect(deepLinkUrl({ path: [1, 2] })).toBeUndefined();
+    expect(deepLinkUrl(null)).toBeUndefined();
   });
 
   it('reads a deep link as a transcript, and nothing else as one', () => {

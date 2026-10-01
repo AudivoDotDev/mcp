@@ -16,7 +16,7 @@ import {
 import type { LibraryView, TranscriptRef, TranscriptView, View } from '../src/view.js';
 import { outcomeOf, type Host, type ToolResult } from './bridge.js';
 import { el, clear } from './dom.js';
-import { refFromPath } from './format.js';
+import { deepLinkUrl, refFromPath } from './format.js';
 import { mountLibrary } from './library.js';
 import { mountReader, type MountedReader } from './reader.js';
 
@@ -24,7 +24,7 @@ type HostContext = ReturnType<App['getHostContext']>;
 
 const root = document.getElementById('app')!;
 const app = new App(
-  { name: 'Audivo', version: '0.4.0' },
+  { name: 'Audivo', version: '0.4.1' },
   { availableDisplayModes: ['inline', 'fullscreen'] },
 );
 
@@ -39,6 +39,13 @@ function applyContext(next: HostContext): void {
   if (next?.styles?.variables !== undefined) applyHostStyleVariables(next.styles.variables);
   if (next?.styles?.css?.fonts !== undefined) applyHostFonts(next.styles.css.fonts);
   document.documentElement.dataset.mode = context?.displayMode ?? 'inline';
+  // ChatGPT Desktop lets people choose a default or a pointer cursor for
+  // controls; anything else, or nothing, is a pointer.
+  const cursor = context?.['openai/interactionCursor'];
+  document.documentElement.style.setProperty(
+    '--cursor-interaction',
+    cursor === 'default' ? 'default' : 'pointer',
+  );
 }
 
 const host: Host = {
@@ -62,8 +69,12 @@ const host: Host = {
       return false;
     }
   },
-  noteOpened(text) {
-    void app.updateModelContext({ content: [{ type: 'text', text }] }).catch(() => {});
+  noteOpened(text, title) {
+    void app
+      .updateModelContext({
+        content: [{ type: 'text', text, _meta: { 'openai/title': title } }],
+      })
+      .catch(() => {});
   },
   get locale() {
     return context?.locale;
@@ -123,8 +134,8 @@ function show(view: View | undefined): void {
 }
 
 function followDeepLink(): void {
-  const link = context?.['openai/deepLink'] as { url?: unknown } | undefined;
-  const ref = typeof link?.url === 'string' ? refFromPath(link.url) : undefined;
+  const url = deepLinkUrl(context?.['openai/deepLink']);
+  const ref = url === undefined ? undefined : refFromPath(url);
   if (ref !== undefined) void open(ref);
 }
 
