@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.2
+
+Fewer requests while waiting, and a wait that survives a throttle:
+
+- **The reader card looks at a running job every 20 seconds**, one request a look, instead of
+  holding 20-second waits open back to back. A failed look no longer marks the job failed: the card
+  keeps the job's last status, says it lost touch, backs off, and after four failures in a row
+  offers **Retry**. Only the server says a job failed.
+- **The hosted server's waits look every 10 seconds**, not every 3: two requests per 20-second
+  slice, not seven. A look the API refuses for a reason that passes (a throttle, a moment it did
+  not answer) ends the wait with the job's last status and how to keep waiting, instead of failing
+  a call whose job was accepted.
+- **`Retry-After` is relayed** as `retry_after_seconds` on the error a model reads, so it waits as
+  long as the API asked instead of guessing. A throttle asking for two seconds or less is waited
+  out once by the server itself before it answers.
+
+And an episode nobody has transcribed yet can be transcribed by its id (contract 0.16.0):
+
+- **`transcribe` takes `feed_url` and `itunes_id` beside `episode_id`**, as `list_episodes` took
+  them. An id alone only worked for an episode Audivo had already transcribed, so the path a model
+  takes for a new one (list, then transcribe) was refused with `episode_not_found`. The library's
+  own Transcribe button sends them too.
+
 ## 0.4.1
 
 Checked against OpenAI's MCP extensions specification and SDK source:

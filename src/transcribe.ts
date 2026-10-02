@@ -37,7 +37,7 @@ import type {
   TranscriptJobAccepted,
   TranscriptJobResponse,
 } from './api-client.js';
-import { localError } from './errors.js';
+import { localError, McpToolError } from './errors.js';
 import {
   TRANSCRIPT_PAGE_CHARS,
   deliverJobPage,
@@ -77,11 +77,15 @@ export type WaitPolicy = {
  * Behind the edge: the whole call must answer inside the gateway's 29 s. A
  * fresh episode takes a minute or two, so the hosted answer to a miss is
  * usually the job handle, and `read_transcript` waits the rest in slices.
+ *
+ * Every look is one request on the account's plan, and a job that takes
+ * minutes is not finished sooner by being asked more often: two looks a
+ * slice, not seven (ADR-0037 in the API's repository).
  */
 export const HOSTED_WAIT: WaitPolicy = {
   defaultSeconds: 20,
   maxSeconds: 20,
-  pollIntervalMs: 3_000,
+  pollIntervalMs: 10_000,
   budgetMs: 24_000,
 };
 
@@ -102,9 +106,30 @@ export const LOCAL_WAIT: WaitPolicy = {
 const MAX_WAIT_SECONDS = 900;
 
 /**
+ * One look at a job during a wait, or `'stop'` when the API refused it for a
+ * reason that passes: the account's request rate, or a moment it did not
+ * answer. The job is accepted and running either way, so a refused look ends
+ * the wait with what is known instead of failing the call.
+ */
+async function look(
+  call: ApiCall,
+  ctx: ToolContext,
+  jobId: string,
+): Promise<TranscriptJobResponse | 'stop'> {
+  try {
+    return await ctx.api.getTranscriptJob(call, jobId);
+  } catch (error) {
+    if (error instanceof McpToolError && error.retryable) return 'stop';
+    throw error;
+  }
+}
+
+/**
  * Polls one job until it ends, or until the time this call may spend is gone.
  * The first look is after one interval: a job the API has just accepted is
- * queued, and asking at once only spends a request to learn that.
+ * queued, and asking at once only spends a request to learn that. A look the
+ * API refuses for a passing reason ends the wait early with the last status
+ * (`look`), and the caller waits again through `read_transcript`.
  */
 export async function waitForJob(
   call: ApiCall,
@@ -128,7 +153,8 @@ export async function waitForJob(
   if (latest === undefined && ctx.now() + policy.pollIntervalMs > deadline) {
     // No time to wait a full interval, but a look costs one request and is
     // worth more to a caller than a guess.
-    return ctx.api.getTranscriptJob(call, jobId);
+    const seen = await look(call, ctx, jobId);
+    return seen === 'stop' ? latest : seen;
   }
   while (ctx.now() + policy.pollIntervalMs <= deadline) {
     if (ctx.signal?.aborted === true) break;
@@ -140,7 +166,9 @@ export async function waitForJob(
       );
     }
     await ctx.sleep(policy.pollIntervalMs, ctx.signal);
-    latest = await ctx.api.getTranscriptJob(call, jobId);
+    const seen = await look(call, ctx, jobId);
+    if (seen === 'stop') return latest;
+    latest = seen;
     if (!('job_id' in latest) || isTerminal(latest.status)) return latest;
   }
   return latest;
@@ -192,6 +220,7 @@ type TranscribeArgs = {
   readonly feed_url?: string;
   readonly guid?: string;
   readonly episode_id?: string;
+  readonly itunes_id?: number | null;
   readonly upload_id?: string;
   readonly path?: string;
   readonly max_credits?: number;
@@ -209,6 +238,7 @@ type Pointer =
   | { readonly url: string }
   | { readonly feed_url: string; readonly guid: string }
   | { readonly episode_id: string }
+  | { readonly episode_id: string; readonly feed_url: string; readonly itunes_id: number | null }
   | { readonly upload_id: string };
 
 /**
@@ -222,10 +252,13 @@ async function pointerFor(
   ctx: ToolContext,
   local: LocalSources | undefined,
 ): Promise<{ readonly pointer: Pointer; readonly source: Record<string, unknown> }> {
+  // A feed_url beside an episode_id is the feed that episode was listed from
+  // (ADR-0038 in the API's repository), not the feed + guid input.
+  const byEpisode = args.episode_id !== undefined;
   const given = [
     args.url !== undefined,
-    args.feed_url !== undefined || args.guid !== undefined,
-    args.episode_id !== undefined,
+    args.guid !== undefined || (!byEpisode && args.feed_url !== undefined),
+    byEpisode,
     args.upload_id !== undefined,
     args.path !== undefined,
   ].filter(Boolean).length;
@@ -249,14 +282,30 @@ async function pointerFor(
     }
     return { pointer: { url: args.url }, source: { kind: 'url' } };
   }
+  if (args.itunes_id !== undefined && !(byEpisode && args.feed_url !== undefined)) {
+    throw localError('invalid_request', 'itunes_id goes with episode_id and feed_url');
+  }
+  if (args.episode_id !== undefined) {
+    // An episode nobody has transcribed is in no catalog row, so it travels
+    // with the feed and Apple id list_episodes took; the API reads the feed
+    // for the item whose id matches, and keeps that id.
+    return {
+      pointer:
+        args.feed_url === undefined
+          ? { episode_id: args.episode_id }
+          : {
+              episode_id: args.episode_id,
+              feed_url: args.feed_url,
+              itunes_id: args.itunes_id ?? null,
+            },
+      source: { kind: 'episode_id' },
+    };
+  }
   if (args.feed_url !== undefined || args.guid !== undefined) {
     if (args.feed_url === undefined || args.guid === undefined) {
       throw localError('invalid_request', 'feed_url and guid go together');
     }
     return { pointer: { feed_url: args.feed_url, guid: args.guid }, source: { kind: 'feed' } };
-  }
-  if (args.episode_id !== undefined) {
-    return { pointer: { episode_id: args.episode_id }, source: { kind: 'episode_id' } };
   }
   if (args.upload_id !== undefined) {
     return { pointer: { upload_id: args.upload_id }, source: { kind: 'upload_id' } };
@@ -288,14 +337,20 @@ function inputSchema(local: boolean) {
       .url()
       .max(MAX_URL_LENGTH)
       .optional()
-      .describe('With guid: an RSS feed and one item.'),
+      .describe("With guid: an RSS feed and one item. With episode_id: that show's feed."),
     guid: z.string().min(1).max(MAX_GUID_LENGTH).optional(),
     episode_id: z
       .string()
       .regex(EPISODE_ID_PATTERN)
       .max(40)
       .optional()
-      .describe('From list_episodes.'),
+      .describe("From list_episodes, with that show's feed_url and itunes_id."),
+    itunes_id: z
+      .int()
+      .min(1)
+      .nullable()
+      .optional()
+      .describe('With episode_id, as list_episodes took it.'),
     upload_id: z.string().regex(UPLOAD_ID_PATTERN).max(40).optional(),
     max_credits: z.int().min(0).optional().describe('Refuse if it could cost more.'),
     wait_seconds: z

@@ -1,6 +1,6 @@
 {
   "name": "@audivo/mcp",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Official Audivo MCP server: one call from an episode link to its transcript. Podcast search, episode discovery, transcripts, and on the local server YouTube audio, for Claude, ChatGPT, Codex, Cursor, and any other MCP client.",
   "mcpName": "io.github.AudivoDotDev/mcp",
   "license": "MIT",

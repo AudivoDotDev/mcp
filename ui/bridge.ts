@@ -22,17 +22,23 @@ export type ToolResult = {
 
 export type Outcome =
   | { readonly ok: true; readonly view: View | undefined }
-  | { readonly ok: false; readonly message: string; readonly reference: string | undefined };
+  | {
+      readonly ok: false;
+      readonly message: string;
+      readonly reference: string | undefined;
+      /** The API's `Retry-After`, when the failure carried one: the least time to wait. */
+      readonly retryAfterSeconds?: number;
+    };
 
-/** The error code in a failed result's trusted block, when there is one. */
-function errorCodeOf(result: ToolResult): string | undefined {
+/** A failed result's trusted error block, when there is one. */
+function errorOf(result: ToolResult): { code?: unknown; retry_after_seconds?: unknown } {
   const first = result.content?.[0];
-  if (first?.type !== 'text' || first.text === undefined) return undefined;
+  if (first?.type !== 'text' || first.text === undefined) return {};
   try {
-    const parsed = JSON.parse(first.text) as { error?: { code?: unknown } };
-    return typeof parsed.error?.code === 'string' ? parsed.error.code : undefined;
+    const parsed = JSON.parse(first.text) as { error?: unknown };
+    return typeof parsed.error === 'object' && parsed.error !== null ? parsed.error : {};
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -73,10 +79,15 @@ export function outcomeOf(result: ToolResult): Outcome {
   const meta = result._meta ?? {};
   if (result.isError === true) {
     const reference = meta[REQUEST_ID_KEY];
+    const error = errorOf(result);
+    const retryAfter = error.retry_after_seconds;
     return {
       ok: false,
-      message: messageFor(errorCodeOf(result)),
+      message: messageFor(typeof error.code === 'string' ? error.code : undefined),
       reference: typeof reference === 'string' ? reference : undefined,
+      ...(typeof retryAfter === 'number' && Number.isFinite(retryAfter) && retryAfter >= 0
+        ? { retryAfterSeconds: retryAfter }
+        : {}),
     };
   }
   return { ok: true, view: meta[VIEW_KEY] as View | undefined };

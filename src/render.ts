@@ -1008,6 +1008,8 @@ export function toErrorResult(
     retryable: error.retryable,
     status: error.status,
     doc_url: error.docUrl,
+    // How long the API asked for, so a model waits that long and not a guess.
+    ...(error.retryAfterSeconds === null ? {} : { retry_after_seconds: error.retryAfterSeconds }),
   };
   const doc: Document =
     error.origin === 'api'

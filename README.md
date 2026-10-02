@@ -42,7 +42,9 @@ and `youtube_search`. Both serve an [app](#the-app) to clients that render MCP A
 ### `transcribe`
 
 Pass one episode: an Apple Podcasts link, `feed_url` with `guid`, an `episode_id` from
-`list_episodes`, or an `upload_id` — and on the local server, a YouTube link or an absolute `path`.
+`list_episodes` (with that show's `feed_url` and `itunes_id`, so an episode nobody has transcribed
+yet can be found), or an `upload_id` — and on the local server, a YouTube link or an absolute
+`path`.
 
 - An episode that is already transcribed comes back at once.
 - A fresh one becomes a job. `transcribe` waits for it inside the call: up to 20 seconds on the

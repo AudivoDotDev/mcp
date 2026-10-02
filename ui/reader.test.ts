@@ -1,6 +1,14 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
-import { INLINE_SEGMENTS, chipLabel, mountReader } from './reader.js';
+import {
+  INLINE_SEGMENTS,
+  POLL_BACKOFF_MAX_MS,
+  POLL_FAILURES_BEFORE_RETRY,
+  POLL_INTERVAL_MS,
+  chipLabel,
+  mountReader,
+  pollDelay,
+} from './reader.js';
 import { fakeHost, lines, settle, transcriptView } from './testing.js';
 
 let root: HTMLElement;
@@ -108,16 +116,87 @@ describe('the reader', () => {
       ok: true,
       view: index === 0 ? { ...running, progress_percent: 80 } : transcriptView(),
     }));
-    mountReader(root, host, running, { sleep: noSleep });
+    const slept: number[] = [];
+    mountReader(root, host, running, { sleep: async (ms) => void slept.push(ms) });
     expect(root.querySelector('[role="status"]')!.textContent).toContain('Transcribing… 40%');
     await settle();
     await settle();
+    // One request a look, a look every interval: the server holds no wait
+    // open, and the view in hand is fresh, so even the first look waits.
     expect(calls).toEqual([
-      { name: 'read_transcript', args: { job_id: 'job_abcdefghijklmnop', wait_seconds: 20 } },
-      { name: 'read_transcript', args: { job_id: 'job_abcdefghijklmnop', wait_seconds: 20 } },
+      { name: 'read_transcript', args: { job_id: 'job_abcdefghijklmnop' } },
+      { name: 'read_transcript', args: { job_id: 'job_abcdefghijklmnop' } },
     ]);
+    expect(slept).toEqual([POLL_INTERVAL_MS, POLL_INTERVAL_MS]);
     expect(root.querySelector('[role="status"]')).toBeNull();
     expect(root.querySelectorAll('.segment').length).toBeGreaterThan(0);
+  });
+
+  it('keeps the job’s status through a failed look, says so, backs off, and recovers', async () => {
+    const running = transcriptView({ status: 'transcribing', page: null });
+    let gate: () => void = () => {};
+    const { host, calls } = fakeHost((_call, index) => {
+      if (index === 0) {
+        return {
+          ok: false,
+          message: 'Audivo is busy.',
+          reference: undefined,
+          retryAfterSeconds: 1,
+        };
+      }
+      return new Promise((resolve) => {
+        gate = () => resolve({ ok: true, view: transcriptView() });
+      });
+    });
+    const slept: number[] = [];
+    mountReader(root, host, running, { sleep: async (ms) => void slept.push(ms) });
+    await settle();
+    // A failed look is not a failed job: no alert, the status stays, and a
+    // quiet note says the reader will look again.
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+    expect(root.querySelector('[role="status"]')!.textContent).toContain('Transcribing');
+    expect(root.textContent).toContain('Lost touch with Audivo');
+    expect(slept).toEqual([POLL_INTERVAL_MS, pollDelay(1, 1)]);
+    gate();
+    await settle();
+    expect(calls).toHaveLength(2);
+    expect(root.textContent).not.toContain('Lost touch');
+    expect(root.querySelectorAll('.segment').length).toBeGreaterThan(0);
+  });
+
+  it('after failures in a row, stops and offers Retry, which looks again at once', async () => {
+    const running = transcriptView({ status: 'queued', page: null });
+    let healthy = false;
+    const { host, calls } = fakeHost(() =>
+      healthy
+        ? { ok: true, view: transcriptView() }
+        : { ok: false, message: 'Audivo couldn’t be reached.', reference: undefined },
+    );
+    const slept: number[] = [];
+    mountReader(root, host, running, { sleep: async (ms) => void slept.push(ms) });
+    for (let i = 0; i < POLL_FAILURES_BEFORE_RETRY + 2; i += 1) await settle();
+    expect(calls).toHaveLength(POLL_FAILURES_BEFORE_RETRY);
+    expect(root.querySelector('[role="alert"]')!.textContent).toContain(
+      'The transcription itself keeps going.',
+    );
+    expect(root.querySelector('[role="status"]')!.textContent).toContain('Queued');
+    const before = slept.length;
+    healthy = true;
+    button('Retry')!.click();
+    await settle();
+    await settle();
+    expect(calls).toHaveLength(POLL_FAILURES_BEFORE_RETRY + 1);
+    // The person asked, so the look is immediate.
+    expect(slept).toHaveLength(before);
+    expect(root.querySelector('[role="alert"]')).toBeNull();
+    expect(root.querySelectorAll('.segment').length).toBeGreaterThan(0);
+  });
+
+  it('backs off between failed looks, up to a ceiling, and never under the server’s wait', () => {
+    expect(pollDelay(0)).toBe(POLL_INTERVAL_MS);
+    expect(pollDelay(1)).toBe(POLL_INTERVAL_MS * 2);
+    expect(pollDelay(20)).toBe(POLL_BACKOFF_MAX_MS);
+    expect(pollDelay(0, 300)).toBe(300_000);
   });
 
   it('stops waiting once it is gone', async () => {

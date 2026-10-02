@@ -1170,8 +1170,12 @@ export interface components {
       /** @description The most this call may take; refused `422 max_credits_exceeded` before anything is reserved when it could take more. Omit for no cap beyond the balance. */
       max_credits?: components['schemas']['CreditAmount'];
     };
+    /** @description An episode by its canonical id. One the catalog already holds needs nothing else, and its feed is not read again. One nobody has transcribed yet, as `GET /v1/shows/{show_id}/episodes` lists them, is in no catalog row: send the `feed_url` and `itunes_id` that listing took, and the feed is read for the item whose id matches (ADR-0038). Without them such an id is `404 episode_not_found`; with them, an id the feed does not hold under that Apple id is `422 episode_not_found`. When the catalog holds the episode, its row wins over the feed sent. */
     TranscriptCreateByEpisodeId: {
       episode_id: components['schemas']['EpisodeId'];
+      feed_url?: components['schemas']['FeedUrl'];
+      /** @description The show's Apple id, as the listing took it, or `null` for a show that has none. Only with `feed_url`: it decides how the show's id, and so the episode's, derives (ADR-0005). */
+      itunes_id?: number | null;
       language?: components['schemas']['NullableLanguage'];
       format?: components['schemas']['TranscriptFormat'];
       /** @default false */
@@ -1188,7 +1192,7 @@ export interface components {
       /** @description The most this call may take; refused `422 max_credits_exceeded` before anything is reserved when it could take more. Omit for no cap beyond the balance. */
       max_credits?: components['schemas']['CreditAmount'];
     };
-    /** @description Exactly one of `url`, `feed_url`+`guid`, `episode_id`, or `upload_id`. `format` is delivery-only and never affects the cache key or the produced transcript. Raw-audio URLs, engine selection, diarization, vocabulary, and callback URLs are rejected rather than ignored. */
+    /** @description Exactly one of `url`, `feed_url`+`guid`, `episode_id` (with the `feed_url` and `itunes_id` it was listed under, when the catalog does not hold it yet), or `upload_id`. `format` is delivery-only and never affects the cache key or the produced transcript. Raw-audio URLs, engine selection, diarization, vocabulary, and callback URLs are rejected rather than ignored. */
     TranscriptCreateRequest:
       | components['schemas']['TranscriptCreateByUrl']
       | components['schemas']['TranscriptCreateByFeedGuid']

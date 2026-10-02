@@ -47,6 +47,12 @@ function json(status: number, body: unknown) {
   return { status, body: JSON.stringify(body) };
 }
 
+/** The edge's own throttle refusal, as API Gateway answers it (ADR-0037: one second). */
+const throttled = () => ({
+  ...json(429, errorEnvelope({ code: 'rate_limited', type: 'rate_limited', retryable: true })),
+  headers: { 'retry-after': '1' },
+});
+
 const running = (status: 'queued' | 'transcribing' = 'transcribing') =>
   jobStatus({
     status,
@@ -68,7 +74,7 @@ function harness(
   const clock = config.clock ?? fakeClock();
   const ctx: ToolContext = {
     credential: CREDENTIAL,
-    api: createApiClient({ baseUrl: BASE_URL, fetch: api.fetch }),
+    api: createApiClient({ baseUrl: BASE_URL, fetch: api.fetch, sleep: clock.sleep }),
     nonce: nonces('0123456789abcdef'),
     trace: [],
     ...waitContext(clock, config.wait ?? HOSTED_WAIT),
@@ -91,7 +97,7 @@ function harness(
 describe('transcribe: a fresh episode', () => {
   it('submits once, waits on the job, and hands back the first page when it completes', async () => {
     const { api, run } = harness({
-      transcripts: { [JOB_ID]: [running('queued'), running(), jobStatus()] },
+      transcripts: { [JOB_ID]: [running('queued'), jobStatus()] },
     });
 
     const doc = await run({ url: APPLE_URL });
@@ -101,7 +107,7 @@ describe('transcribe: a fresh episode', () => {
     expect(submit!.body).toEqual({ url: APPLE_URL, dry_run: false });
     expect(submit!.headers['idempotency-key']).toMatch(/^mcp-transcribe-[a-f0-9]{40}$/);
     expect(submit!.headers.authorization).toBe(CREDENTIAL);
-    expect(api.callsTo('getTranscriptJob')).toHaveLength(3);
+    expect(api.callsTo('getTranscriptJob')).toHaveLength(2);
     expect(doc.trusted).toMatchObject({
       source: { kind: 'url' },
       group_id: GROUP_ID,
@@ -125,12 +131,49 @@ describe('transcribe: a fresh episode', () => {
         wait_with: { tool: 'read_transcript', arguments: { job_id: JOB_ID } },
       },
     });
-    // 900 asked; the hosted policy grants its 20, polled every 3 s.
+    // 900 asked; the hosted policy grants its 20, looked at every 10 s: two
+    // requests on the account's plan, not seven (ADR-0037).
     expect(clock.slept.every((ms) => ms === HOSTED_WAIT.pollIntervalMs)).toBe(true);
     expect(clock.slept.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(
       HOSTED_WAIT.maxSeconds * 1000,
     );
     expect(api.callsTo('getTranscriptJob').length).toBe(clock.slept.length);
+  });
+
+  it('ends the wait with the last status when a look is throttled, instead of failing', async () => {
+    // The job was accepted and holds its reservation. A throttled look says
+    // nothing about the job, so the call answers what it knows and how to
+    // keep waiting, rather than an error a model would read as "it failed".
+    const { api, run } = harness({
+      transcripts: { [JOB_ID]: [running(), throttled(), throttled()] },
+    });
+    const doc = await run({ url: APPLE_URL });
+    expect(doc.trusted).toMatchObject({
+      job_id: JOB_ID,
+      status: 'transcribing',
+      transcript: { delivery: 'not_yet', wait_with: { tool: 'read_transcript' } },
+    });
+    // One look, one throttled look, and the client's one quiet retry of it.
+    expect(api.callsTo('getTranscriptJob')).toHaveLength(3);
+  });
+
+  it('answers the accepted job when even the first look is throttled', async () => {
+    const { run } = harness({ transcripts: { [JOB_ID]: throttled() } });
+    const doc = await run({ url: APPLE_URL });
+    expect(doc.trusted).toMatchObject({
+      job_id: JOB_ID,
+      status: 'queued',
+      transcript: { delivery: 'not_yet' },
+    });
+  });
+
+  it('still fails on a look the API refuses for good', async () => {
+    const gone = json(
+      404,
+      errorEnvelope({ code: 'job_not_found', type: 'not_found', message: 'no such job' }),
+    );
+    const { fail } = harness({ transcripts: { [JOB_ID]: [running(), gone] } });
+    expect(await fail({ url: APPLE_URL })).toMatchObject({ code: 'job_not_found' });
   });
 
   it('with wait_seconds 0, answers the accepted job without polling', async () => {
@@ -277,6 +320,16 @@ describe('transcribe: what it sends', () => {
         { feed_url: FEED_URL, guid: 'g-1', max_credits: 5, dry_run: false },
       ],
       [{ episode_id: EPISODE_ID }, { episode_id: EPISODE_ID, dry_run: false }],
+      // An episode as list_episodes listed it, with the feed and Apple id
+      // that listing took: how one nobody has transcribed yet is found.
+      [
+        { episode_id: EPISODE_ID, feed_url: FEED_URL, itunes_id: 1502871393 },
+        { episode_id: EPISODE_ID, feed_url: FEED_URL, itunes_id: 1502871393, dry_run: false },
+      ],
+      [
+        { episode_id: EPISODE_ID, feed_url: FEED_URL },
+        { episode_id: EPISODE_ID, feed_url: FEED_URL, itunes_id: null, dry_run: false },
+      ],
       [{ upload_id: UPLOAD_ID }, { upload_id: UPLOAD_ID, dry_run: false }],
     ];
     for (const [args, body] of cases) {
@@ -292,6 +345,9 @@ describe('transcribe: what it sends', () => {
       { url: APPLE_URL, episode_id: EPISODE_ID },
       { feed_url: FEED_URL },
       { guid: 'g-1' },
+      { episode_id: EPISODE_ID, guid: 'g-1' },
+      { episode_id: EPISODE_ID, itunes_id: 7 },
+      { feed_url: FEED_URL, guid: 'g-1', itunes_id: 7 },
     ]) {
       const { api, fail } = harness();
       const error = await fail(args);

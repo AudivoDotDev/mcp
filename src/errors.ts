@@ -139,6 +139,19 @@ const API_ERROR_TYPE_SET: ReadonlySet<string> = new Set(Object.values(ERROR_TYPE
 
 /** `ErrorDetail.message` is bounded at 1000 characters in the contract; no more is relayed. */
 export const ERROR_MESSAGE_MAX_LENGTH = 1000;
+/**
+ * The most `Retry-After` relayed, in seconds. The edge sends one second
+ * (ADR-0037); a larger value would be a header nobody here chose, and a model
+ * told to wait an hour would just stop.
+ */
+export const RETRY_AFTER_MAX_SECONDS = 300;
+
+/** `Retry-After` as delta-seconds, the only form the API sends; anything else is not relayed. */
+export function parseRetryAfter(header: string | null | undefined): number | null {
+  if (header === null || header === undefined || !/^\s*\d{1,6}\s*$/.test(header)) return null;
+  return Math.min(Number(header.trim()), RETRY_AFTER_MAX_SECONDS);
+}
+
 /** The contract's `RequestId`: the hyphen admits an id minted at the edge from API Gateway's own. */
 const REQUEST_ID_PATTERN = /^req_[A-Za-z0-9-]+$/;
 
@@ -155,6 +168,8 @@ export class McpToolError extends Error {
   /** The API's request id, so a customer can quote it; `null` for a local refusal. */
   readonly requestId: string | null;
   readonly docUrl: string | null;
+  /** The API's `Retry-After`, in seconds, when it sent one; how long to wait before asking again. */
+  readonly retryAfterSeconds: number | null;
 
   constructor(input: {
     readonly origin: ToolErrorOrigin;
@@ -165,6 +180,7 @@ export class McpToolError extends Error {
     readonly status?: number | null;
     readonly requestId?: string | null;
     readonly docUrl?: string | null;
+    readonly retryAfterSeconds?: number | null;
     readonly cause?: unknown;
   }) {
     super(input.message, input.cause === undefined ? undefined : { cause: input.cause });
@@ -175,6 +191,7 @@ export class McpToolError extends Error {
     this.status = input.status ?? null;
     this.requestId = input.requestId ?? null;
     this.docUrl = input.docUrl ?? null;
+    this.retryAfterSeconds = input.retryAfterSeconds ?? null;
   }
 }
 
@@ -253,9 +270,15 @@ export function parseErrorEnvelope(text: string): ApiErrorDetail | undefined {
  * A non-2xx answer from the API as one typed error. An envelope is relayed
  * with its own code, type, and message; anything else — API Gateway's own
  * throttle body, a 502 page — is answered from the status line, and its body
- * is discarded rather than shown.
+ * is discarded rather than shown. `Retry-After` travels with either, so the
+ * caller waits as long as the API asked rather than guessing.
  */
-export function fromApiResponse(status: number, text: string): McpToolError {
+export function fromApiResponse(
+  status: number,
+  text: string,
+  retryAfterHeader: string | null = null,
+): McpToolError {
+  const retryAfterSeconds = parseRetryAfter(retryAfterHeader);
   const envelope = parseErrorEnvelope(text);
   if (envelope !== undefined) {
     return new McpToolError({
@@ -267,6 +290,7 @@ export function fromApiResponse(status: number, text: string): McpToolError {
       status,
       requestId: envelope.request_id === '' ? null : envelope.request_id,
       docUrl: envelope.doc_url === '' ? null : envelope.doc_url,
+      retryAfterSeconds,
     });
   }
   if (status === 401 || status === 403) {
@@ -287,6 +311,7 @@ export function fromApiResponse(status: number, text: string): McpToolError {
       message: 'The account is over its request rate for the moment; wait and retry.',
       retryable: true,
       status,
+      retryAfterSeconds,
     });
   }
   return new McpToolError({
@@ -298,6 +323,7 @@ export function fromApiResponse(status: number, text: string): McpToolError {
       'keeps happening.',
     retryable: status >= 500,
     status,
+    retryAfterSeconds,
   });
 }
 

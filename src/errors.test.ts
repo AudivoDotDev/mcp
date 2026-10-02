@@ -5,9 +5,11 @@ import {
   ERROR_TYPES,
   LOCAL_ERROR_CODES,
   errorName,
+  RETRY_AFTER_MAX_SECONDS,
   fromApiResponse,
   localError,
   parseErrorEnvelope,
+  parseRetryAfter,
   scrub,
 } from './errors.js';
 import { CREDENTIAL, REQUEST_ID, TOKEN, errorEnvelope } from './testing/fake-api.js';
@@ -82,6 +84,28 @@ describe('a non-2xx answer', () => {
     expect(fromApiResponse(418, 'teapot').retryable).toBe(false);
     for (const status of [401, 403, 429, 502, 418]) {
       expect(fromApiResponse(status, `secret body ${CREDENTIAL}`).message).not.toContain('secret');
+    }
+  });
+
+  it("keeps the API's Retry-After, with an envelope or without one, so nobody guesses the wait", () => {
+    const envelope = errorEnvelope({ code: 'rate_limited', type: 'rate_limited', retryable: true });
+    expect(fromApiResponse(429, JSON.stringify(envelope), '1').retryAfterSeconds).toBe(1);
+    expect(fromApiResponse(429, 'Too Many Requests', '6').retryAfterSeconds).toBe(6);
+    expect(fromApiResponse(503, '<html/>', '30').retryAfterSeconds).toBe(30);
+    expect(fromApiResponse(429, 'Too Many Requests').retryAfterSeconds).toBeNull();
+  });
+});
+
+describe('reading Retry-After', () => {
+  it('takes delta-seconds, bounded, and nothing else', () => {
+    expect(parseRetryAfter('1')).toBe(1);
+    expect(parseRetryAfter(' 12 ')).toBe(12);
+    expect(parseRetryAfter('0')).toBe(0);
+    expect(parseRetryAfter('86400')).toBe(RETRY_AFTER_MAX_SECONDS);
+    // An HTTP-date is legal HTTP but not what this API sends; it is not relayed.
+    expect(parseRetryAfter('Wed, 21 Oct 2026 07:28:00 GMT')).toBeNull();
+    for (const bad of [null, undefined, '', '-1', '1.5', 'soon']) {
+      expect(parseRetryAfter(bad), String(bad)).toBeNull();
     }
   });
 });

@@ -205,8 +205,8 @@ const listEpisodes = defineTool({
   name: 'list_episodes',
   title: 'List episodes',
   description:
-    "A show's episodes, newest first, with the episode_id a quote's episode_ids takes — how to " +
-    'reach an older episode. Pass show_id, feed_url and itunes_id as ' +
+    "A show's episodes, newest first, with the episode_id transcribe (with this feed_url and " +
+    "itunes_id) and a quote's episode_ids take. Pass show_id, feed_url and itunes_id as " +
     'search_shows or chart_shows returned them. Trusted block: ids, dates, durations, estimates. ' +
     'Fenced block: titles.',
   inputSchema: z.object({

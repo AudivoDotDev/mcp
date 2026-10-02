@@ -1,8 +1,10 @@
 /**
- * One version, stated in four places, held together here: the npm package,
- * the server's own `serverInfo`, the MCP Registry entry, and the package the
- * entry points at. A release that bumps one and forgets another publishes a
- * registry entry naming a version npm does not have.
+ * One version, stated in five places, held together here: the npm package,
+ * the server's own `serverInfo`, the MCP Registry entry, the package the
+ * entry points at, and the app's own client info (`ui/main.ts`, which the
+ * app bundle cannot import from the server). A release that bumps one and
+ * forgets another publishes a registry entry naming a version npm does not
+ * have, or an app that tells the host it is the last release.
  */
 import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -26,6 +28,9 @@ describe('the release', () => {
     expect(SERVER_INFO.version).toBe(pkg.version);
     expect(server.version).toBe(pkg.version);
     expect(server.packages.map((entry) => entry.version)).toEqual([pkg.version]);
+    const app = fs.readFileSync(new URL('../ui/main.ts', import.meta.url), 'utf8');
+    const stated = [...app.matchAll(/\bversion: '([^']+)'/g)].map((match) => match[1]);
+    expect(stated).toEqual([pkg.version]);
   });
 
   it("names the registry entry the way the registry checks it: the package's mcpName", () => {

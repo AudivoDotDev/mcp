@@ -129,11 +129,14 @@ export function mountLibrary(
       el('h2', { class: 'subhead' }, show.title),
       list.length === 0
         ? notice('This show has no episodes Audivo can transcribe.')
-        : el('ul', { class: 'list' }, ...list.map((episode) => episodeRow(episode))),
+        : el('ul', { class: 'list' }, ...list.map((episode) => episodeRow(show, episode))),
     );
   }
 
-  function episodeRow(episode: EpisodesView['episodes'][number]): HTMLElement {
+  function episodeRow(
+    show: ShowsView['shows'][number],
+    episode: EpisodesView['episodes'][number],
+  ): HTMLElement {
     const facts = [
       episode.published_at === null ? null : shortDate(episode.published_at, host.locale),
       episode.duration_sec === null ? null : duration(episode.duration_sec),
@@ -185,7 +188,13 @@ export function mountLibrary(
     async function transcribe(): Promise<void> {
       clear(action);
       action.appendChild(el('span', { class: 'confirm' }, 'Starting…'));
-      const outcome = await host.callTool('transcribe', { episode_id: episode.episode_id });
+      // With the feed it was listed from: an episode nobody has transcribed
+      // yet is in no catalog row, and the id alone cannot find its feed.
+      const outcome = await host.callTool('transcribe', {
+        episode_id: episode.episode_id,
+        feed_url: show.feed_url,
+        itunes_id: show.itunes_id,
+      });
       if (!outcome.ok) {
         idle();
         action.prepend(notice(outcome.message, 'failed'));

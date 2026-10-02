@@ -394,7 +394,12 @@ export type RecordedCall = {
   readonly body: unknown;
 };
 
-export type FakeResponse = { readonly status: number; readonly body: string };
+export type FakeResponse = {
+  readonly status: number;
+  readonly body: string;
+  /** Response headers beyond `content-type`, by lower-case name: `retry-after`, say. */
+  readonly headers?: Readonly<Record<string, string>>;
+};
 
 export type FakeApiOptions = {
   readonly search?: Schemas['ShowSearchResponse'];
@@ -621,7 +626,10 @@ export function fakeApi(options: FakeApiOptions = {}): FakeApi {
     return {
       status: response.status,
       headers: {
-        get: (name) => (name.toLowerCase() === 'content-type' ? 'application/json' : null),
+        get: (name) =>
+          name.toLowerCase() === 'content-type'
+            ? 'application/json'
+            : (response.headers?.[name.toLowerCase()] ?? null),
       },
       text: async () => response.body,
     };

@@ -141,9 +141,11 @@ describe('the library', () => {
       .find((b) => b.textContent === 'Transcribe')!
       .dispatchEvent(new Event('click'));
     await settle();
+    // The episode travels with the feed and Apple id it was listed under, so
+    // one nobody has transcribed yet can be found (ADR-0038).
     expect(calls.at(-1)).toEqual({
       name: 'transcribe',
-      args: { episode_id: 'ep_abcdefghijklmnop' },
+      args: { episode_id: 'ep_abcdefghijklmnop', feed_url: 'https://f.example/rss', itunes_id: 7 },
     });
     expect(onTranscribed).toHaveBeenCalledWith(expect.objectContaining({ kind: 'transcript' }));
   });

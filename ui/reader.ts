@@ -1,8 +1,11 @@
 /**
  * The reader: one transcript, from `transcribe` or opened from the library.
  *
- * A job still running is waited on through `read_transcript`, twenty seconds
- * a call (the hosted server's ceiling), until it ends. A finished one shows
+ * A job still running is looked at through `read_transcript` every
+ * `POLL_INTERVAL_MS`, one request a look, until it ends. A look that fails is
+ * not the job failing: the reader keeps the last status, backs off, and after
+ * a few failures in a row offers Retry. Only the server says a job failed. A
+ * finished one shows
  * its first page; later pages come from `read_transcript` with `page_start`,
  * which charges nothing. Search runs over what has been loaded, and says so.
  */
@@ -17,8 +20,24 @@ export const INLINE_SEGMENTS = 6;
 /** The most pages "Load all" fetches in one go, so a very long episode cannot run away. */
 export const LOAD_ALL_PAGE_LIMIT = 25;
 
-/** The pause between waits on a running job, beyond the wait each call already makes. */
-export const POLL_PAUSE_MS = 1_500;
+/**
+ * How often the reader looks at a running job. A fresh episode takes minutes,
+ * and each look is one request on the account's plan; the model may be
+ * waiting on the same job at the same time.
+ */
+export const POLL_INTERVAL_MS = 20_000;
+
+/** The longest wait between looks while they keep failing. */
+export const POLL_BACKOFF_MAX_MS = 120_000;
+
+/** Failed looks in a row after which the reader stops and offers Retry. */
+export const POLL_FAILURES_BEFORE_RETRY = 4;
+
+/** The wait before the next look, after `failures` failed ones in a row. */
+export function pollDelay(failures: number, retryAfterSeconds?: number): number {
+  const backoff = Math.min(POLL_INTERVAL_MS * 2 ** failures, POLL_BACKOFF_MAX_MS);
+  return Math.max(backoff, (retryAfterSeconds ?? 0) * 1000);
+}
 
 export type ReaderOptions = {
   /** Show a back control, for a reader opened from the library. */
@@ -63,6 +82,8 @@ export function mountReader(
   let expanded = !host.inline;
   let busy = false;
   let alive = true;
+  /** A look at a running job that failed; the job's own status is untouched. */
+  let trouble: { readonly message: string; readonly stalled: boolean } | null = null;
 
   const section = el('section', { class: 'reader', attrs: { 'aria-live': 'polite' } });
   clear(root);
@@ -112,7 +133,7 @@ export function mountReader(
     if (!isSettled(view.status)) {
       const label = statusLabel(view.status).text;
       const percent = view.progress_percent;
-      return el(
+      const working = el(
         'div',
         { class: 'notice working', attrs: { role: 'status' } },
         el('span', { class: 'spinner', attrs: { 'aria-hidden': 'true' } }),
@@ -120,6 +141,24 @@ export function mountReader(
         percent === null
           ? null
           : el('progress', { attrs: { max: '100', value: String(Math.round(percent)) } }),
+      );
+      if (trouble === null) return working;
+      return el(
+        'div',
+        { class: 'notices' },
+        working,
+        trouble.stalled
+          ? el(
+              'p',
+              { class: 'notice failed', attrs: { role: 'alert' } },
+              `${trouble.message} The transcription itself keeps going. `,
+              el(
+                'button',
+                { class: 'link', attrs: { type: 'button' }, on: { click: () => void retry() } },
+                'Retry',
+              ),
+            )
+          : el('p', { class: 'notice' }, 'Lost touch with Audivo. Checking again shortly.'),
       );
     }
     if (view.oversized) {
@@ -287,23 +326,47 @@ export function mountReader(
     if (alive) renderBody();
   }
 
-  async function wait(): Promise<void> {
+  /**
+   * Looks at a running job until it settles. The view in hand is fresh, from
+   * the call that rendered it or the library's own read, so the first look
+   * waits an interval. `immediately` is Retry's: the person asked for it.
+   */
+  async function wait(immediately = false): Promise<void> {
+    let failures = 0;
+    let retryAfter: number | undefined;
+    let first = true;
     while (alive && !isSettled(view.status) && 'job_id' in view.ref) {
-      const outcome = await host.callTool('read_transcript', {
-        job_id: view.ref.job_id,
-        wait_seconds: 20,
-      });
+      if (!(first && immediately)) await sleep(pollDelay(failures, retryAfter));
+      first = false;
+      if (!alive) return;
+      const outcome = await host.callTool('read_transcript', { job_id: view.ref.job_id });
       if (!alive) return;
       if (!outcome.ok) {
-        view = { ...view, status: 'failed', error: outcome.message };
-      } else if (outcome.view?.kind === 'transcript') {
+        failures += 1;
+        retryAfter = outcome.retryAfterSeconds;
+        const stalled = failures >= POLL_FAILURES_BEFORE_RETRY;
+        trouble = { message: outcome.message, stalled };
+        render();
+        if (stalled) return;
+        continue;
+      }
+      failures = 0;
+      retryAfter = undefined;
+      trouble = null;
+      if (outcome.view?.kind === 'transcript') {
         view = outcome.view;
         segments = [...(view.page?.segments ?? [])];
         next = view.page?.next_page_start ?? null;
       }
       render();
-      if (!isSettled(view.status)) await sleep(POLL_PAUSE_MS);
     }
+  }
+
+  async function retry(): Promise<void> {
+    if (trouble === null || !trouble.stalled) return;
+    trouble = { ...trouble, stalled: false };
+    render();
+    await wait(true);
   }
 
   render();

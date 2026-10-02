@@ -409,6 +409,21 @@ describe('tool results', () => {
     expect(JSON.stringify(fromApi)).not.toContain(TOKEN);
     expect(textOf(fromApi, 1)).toContain('[redacted]');
 
+    // How long to wait reaches the model when the API said; it is absent otherwise.
+    const throttled = new McpToolError({
+      origin: 'api',
+      code: 'rate_limited',
+      type: 'rate_limited',
+      message: 'slow down',
+      retryable: true,
+      status: 429,
+      retryAfterSeconds: 1,
+    });
+    expect(
+      JSON.parse(textOf(toErrorResult(throttled, CREDENTIAL, nonces(NONCE)), 0)),
+    ).toMatchObject({ error: { code: 'rate_limited', retryable: true, retry_after_seconds: 1 } });
+    expect(JSON.parse(textOf(fromApi, 0)).error).not.toHaveProperty('retry_after_seconds');
+
     const local = new McpToolError({
       origin: 'mcp',
       code: 'expected_total_mismatch',

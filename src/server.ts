@@ -61,7 +61,7 @@ export type McpDeps = {
 export const SERVER_INFO = {
   name: 'audivo',
   title: 'Audivo',
-  version: '0.4.1',
+  version: '0.4.2',
   websiteUrl: 'https://audivo.dev',
   icons: [APP_ICON],
 } as const;

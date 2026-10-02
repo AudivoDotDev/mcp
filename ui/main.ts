@@ -24,7 +24,7 @@ type HostContext = ReturnType<App['getHostContext']>;
 
 const root = document.getElementById('app')!;
 const app = new App(
-  { name: 'Audivo', version: '0.4.1' },
+  { name: 'Audivo', version: '0.4.2' },
   { availableDisplayModes: ['inline', 'fullscreen'] },
 );
 

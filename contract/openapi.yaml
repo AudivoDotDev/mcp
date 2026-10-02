@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Audivo API
-  version: '0.15.0'
+  version: '0.16.0'
   description: >-
     The Audivo API turns a public podcast episode into a clean, timed
     transcript. Name an episode by an Apple Podcasts link, by its RSS feed
@@ -3754,9 +3754,30 @@ components:
       type: object
       additionalProperties: false
       required: [episode_id]
+      description: >-
+        An episode by its canonical id. One the catalog already holds needs
+        nothing else, and its feed is not read again. One nobody has
+        transcribed yet, as `GET /v1/shows/{show_id}/episodes` lists them,
+        is in no catalog row: send the `feed_url` and `itunes_id` that
+        listing took, and the feed is read for the item whose id matches
+        (ADR-0038). Without them such an id is `404 episode_not_found`; with
+        them, an id the feed does not hold under that Apple id is `422
+        episode_not_found`. When the catalog holds the episode, its row wins
+        over the feed sent.
       properties:
         episode_id:
           $ref: '#/components/schemas/EpisodeId'
+        feed_url:
+          $ref: '#/components/schemas/FeedUrl'
+        itunes_id:
+          description: >-
+            The show's Apple id, as the listing took it, or `null` for a show
+            that has none. Only with `feed_url`: it decides how the show's id,
+            and so the episode's, derives (ADR-0005).
+          anyOf:
+            - type: integer
+              minimum: 1
+            - enum: [null]
         language:
           $ref: '#/components/schemas/NullableLanguage'
         format:
@@ -3792,8 +3813,9 @@ components:
             cap beyond the balance.
     TranscriptCreateRequest:
       description: >-
-        Exactly one of `url`, `feed_url`+`guid`, `episode_id`, or
-        `upload_id`. `format` is delivery-only and never affects the cache
+        Exactly one of `url`, `feed_url`+`guid`, `episode_id` (with the
+        `feed_url` and `itunes_id` it was listed under, when the catalog does
+        not hold it yet), or `upload_id`. `format` is delivery-only and never affects the cache
         key or the produced transcript. Raw-audio URLs,
         engine selection, diarization, vocabulary, and callback URLs are
         rejected rather than ignored.

@@ -19,7 +19,7 @@
  * general-purpose HTTP helper.
  */
 import type { components, operations, paths } from './contract/types.js';
-import { errorName, fromApiResponse, localError, type McpToolError } from './errors.js';
+import { errorName, fromApiResponse, localError, McpToolError } from './errors.js';
 
 // --- The contract's shapes, by operation ----------------------------------
 
@@ -136,9 +136,34 @@ export type ApiClientOptions = {
   /** Per call. The API's own ceiling is 29 s; a call that outlives it is not coming back. */
   readonly timeoutMs?: number;
   readonly now?: () => number;
+  readonly sleep?: (ms: number) => Promise<void>;
 };
 
 export const DEFAULT_API_TIMEOUT_MS = 30_000;
+
+/**
+ * The longest `Retry-After` the client waits out by itself, once, before
+ * answering. The edge's throttle asks for one second (ADR-0037), and a
+ * second spent here is cheaper than a model deciding on its own how long to
+ * wait. A longer wait is the caller's to make, so it is relayed instead.
+ */
+export const AUTO_RETRY_MAX_SECONDS = 2;
+
+/**
+ * A refusal worth one quiet retry: the edge's own throttle, with a short
+ * `Retry-After`. Only `rate_limited` qualifies, because the contract refuses
+ * it at the edge before any operation runs. Repeating a POST that was refused
+ * this way cannot do anything twice. `concurrency_limited` is answered by the
+ * operation and clears on its own schedule, so it is never retried here.
+ */
+function isBriefThrottle(error: unknown): error is McpToolError & { retryAfterSeconds: number } {
+  return (
+    error instanceof McpToolError &&
+    error.code === 'rate_limited' &&
+    error.retryAfterSeconds !== null &&
+    error.retryAfterSeconds <= AUTO_RETRY_MAX_SECONDS
+  );
+}
 /** What the API sees; the read surface's own is `AudivoApi/0.1`. */
 export const MCP_USER_AGENT = 'AudivoMcp/0.1';
 
@@ -225,6 +250,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   const baseUrl = options.baseUrl.replace(/\/+$/, '');
   const timeoutMs = options.timeoutMs ?? DEFAULT_API_TIMEOUT_MS;
   const now = options.now ?? (() => Date.now());
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   type SendRequest = {
     readonly method: 'GET' | 'POST';
@@ -240,6 +266,20 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
   /** `send`, keeping the success status for the one operation whose `200` and `202` differ. */
   async function sendWithStatus<T>(
+    call: ApiCall,
+    operation: ApiOperation,
+    request: SendRequest,
+  ): Promise<{ readonly status: number; readonly body: T }> {
+    try {
+      return await attempt<T>(call, operation, request);
+    } catch (error) {
+      if (!isBriefThrottle(error)) throw error;
+      await sleep(error.retryAfterSeconds * 1000);
+      return attempt<T>(call, operation, request);
+    }
+  }
+
+  async function attempt<T>(
     call: ApiCall,
     operation: ApiOperation,
     request: SendRequest,
@@ -275,7 +315,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     }
     call.trace.push({ operation, status: response.status, ms: now() - startedAt });
     if (response.status < 200 || response.status >= 300) {
-      throw fromApiResponse(response.status, text);
+      throw fromApiResponse(response.status, text, response.headers.get('retry-after'));
     }
     try {
       return { status: response.status, body: JSON.parse(text) as T };

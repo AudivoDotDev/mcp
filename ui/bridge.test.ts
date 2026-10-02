@@ -22,6 +22,21 @@ describe('reading a tool result', () => {
     });
   });
 
+  it('carries the wait the server relayed, and only a usable one', () => {
+    const failed = (error: Record<string, unknown>) =>
+      outcomeOf({ isError: true, content: [{ type: 'text', text: JSON.stringify({ error }) }] });
+    expect(failed({ code: 'rate_limited', retry_after_seconds: 1 })).toMatchObject({
+      ok: false,
+      message: messageFor('rate_limited'),
+      retryAfterSeconds: 1,
+    });
+    for (const bad of [undefined, '1', -1, Number.NaN]) {
+      expect(failed({ code: 'rate_limited', retry_after_seconds: bad })).not.toHaveProperty(
+        'retryAfterSeconds',
+      );
+    }
+  });
+
   it('never promotes a plan or a price, for any code', () => {
     for (const code of [
       'payment_required',
